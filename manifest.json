@@ -5,8 +5,7 @@
   "description": "운영툴 게시글 조건 검색 확장프로그램",
   "permissions": [
     "storage",
-    "unlimitedStorage",
-    "activeTab"
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "https://brunch-admin.onkakao.net/*",

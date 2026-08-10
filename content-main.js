@@ -610,7 +610,7 @@ function createRowFromItem(item, templateTr) {
   // "글 정보" 링크 href 갱신 + 새 탭에서 열리도록 설정 (검색 결과가 있는 현재 탭은 그대로 유지)
   const infoLink = clonedTr.querySelector('td.text-left .btn-group a.btn');
   if (infoLink && userId && articleNo) {
-    infoLink.href = `/article/info?userId=${userId}&articleNo=${articleNo}`;
+    infoLink.href = `/article/info?userId=${encodeURIComponent(userId)}&articleNo=${encodeURIComponent(articleNo)}`;
     infoLink.target = '_blank';
     infoLink.rel = 'noopener noreferrer'; // 🔧 새 탭이 원래 탭의 window 객체에 접근 못 하게 하는 보안 관례
   }
@@ -652,7 +652,7 @@ function createRowFromItem(item, templateTr) {
 
     if (isAllowedDonation && userId && articleNo) {
       const donationA = document.createElement('a');
-      donationA.href = `/donationCommentPayment/list?userId=${userId}&articleNo=${articleNo}`;
+      donationA.href = `/donationCommentPayment/list?userId=${encodeURIComponent(userId)}&articleNo=${encodeURIComponent(articleNo)}`;
       donationA.innerHTML = `<span class="label label-info">응원 내역 조회</span>`;
       anchorRef.insertAdjacentElement('afterend', donationA);
       anchorRef = donationA;
@@ -660,7 +660,7 @@ function createRowFromItem(item, templateTr) {
 
     if (isMembership && articleNo) {
       const membershipA = document.createElement('a');
-      membershipA.href = `https://cbt-brunch.dev.onkakao.net/@hana-island/${articleNo}/html?who=brunchCloud`;
+      membershipA.href = `https://cbt-brunch.dev.onkakao.net/@hana-island/${encodeURIComponent(articleNo)}/html?who=brunchCloud`;
       membershipA.target = '_blank';
       membershipA.rel = 'noreferrer';
       membershipA.innerHTML = `<span class="label label-success">멤버십 전문 조회</span>`;
@@ -703,7 +703,7 @@ function createRowFromItem(item, templateTr) {
 
     const authorInfoLink = authorTd.querySelector('.btn-group a.btn');
     if (authorInfoLink && userId) {
-      authorInfoLink.href = `/article/list?search=userId&keyword=${userId}`;
+      authorInfoLink.href = `/article/list?search=userId&keyword=${encodeURIComponent(userId)}`;
       authorInfoLink.target = '_blank';
       authorInfoLink.rel = 'noopener noreferrer';
     }

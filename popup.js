@@ -287,7 +287,7 @@ document.addEventListener("DOMContentLoaded", () => {
           msg += `<br><br>⚡ 같은 기간으로 이전에 받아둔 데이터를 재사용해서 즉시 조회했어요.`;
         }
         if (event.data.usedDefaultRange) {
-          const days = event.data.lookbackDays || 90;
+          const days = event.data.lookbackDays || 1; // 🔧 기본 조회 범위가 1일로 바뀌었으므로 fallback도 맞춤(예전 90일 시절 잔재)
           msg += `<br><br>※ 발행 시각 조건 없이 검색하면 속도를 위해 기본적으로 <b>최근 ${days}일</b> 게시글만 조회됩니다.<br>더 오래된 글도 찾으시려면 발행 시각을 <b>직접 지정</b>으로 설정해서 검색해 주세요.`;
         }
         showAlert("검색 완료", msg);
