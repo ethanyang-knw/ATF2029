@@ -1,0 +1,737 @@
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root {
+  --header-bg:  #000000;
+  --tab-bg:     #384660;
+  --body-bg:    #EDF0F5;
+  --card-bg:    #FFFFFF;
+  --border:     #DCE2EE;
+  --accent:     #5B8DEF;
+  --success:    #0B8A45;
+  --error:      #C0392B;
+  --warn:       #D68910;
+  --text-h:     #FFFFFF;
+  --text-tab:   #7888A8;
+  --text-main:  #1C2A3A;
+  --text-sub:   #6070A0;
+  --text-muted: #A0AABF;
+  --radius:     9px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%;
+  max-width: 600px;
+  height: auto;
+  background: var(--body-bg);
+  color: var(--text-main);
+  font-family: "Noto Sans KR", sans-serif;
+  font-size: 13px;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── 커스텀 스크롤바 ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #C2C9D6;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #A0AABF;
+}
+
+/* ── 헤더 ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--header-bg);
+  flex-shrink: 0;
+  cursor: move; /* 🔧 헤더를 잡고 드래그해서 팝업 위치 이동 가능 */
+}
+
+.header-left { display: flex; align-items: center; gap: 8px; }
+.header-right { display: flex; align-items: center; gap: 6px; }
+
+.logo {
+  width: 24px; height: 24px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px;
+}
+
+.title { font-size: 13px; font-weight: 700; color: var(--text-h); letter-spacing: -0.2px; }
+
+.icon-btn {
+  height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  border: none;
+  background: rgba(255,255,255,0.18); /* 🔧 기존 0.1 → 0.18로 배경을 좀 더 또렷하게 */
+  border-radius: 6px;
+  color: #C8D8F5; /* 🔧 기존 #90A8CC보다 밝게 - 검정 헤더 위에서 더 잘 보이도록 */
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; /* 🔧 기존 12px → 13px */
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.icon-btn:hover { background: rgba(255,255,255,0.3); }
+
+.btn-reset-text {
+  gap: 4px;
+  padding: 0 8px;
+}
+.btn-reset-text span {
+  font-size: 12px; /* 🔧 기존 11px → 12px */
+  font-weight: 600; /* 🔧 기존 500 → 600으로 살짝 굵게, 시인성 보강 */
+  color: #D6E2F7; /* 🔧 기존 #B0C4DE보다 밝게 */
+}
+
+/* ── 메인 & 카드 영역 ── */
+.main {
+  flex: 1;
+  padding: 10px 12px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 50px; /* 🔧 내용이 무엇이든 카드 세 개의 높이를 강제로 동일하게 고정 */
+}
+
+/* 🔧 발행 시각 조건을 꺼두면 사실상 "오늘 날짜"로만 검색된다는 걸 미리 알려주는 안내 문구 */
+.date-disabled-note {
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--warn);
+  background: rgba(214, 137, 16, 0.08);
+  border: 1px solid rgba(214, 137, 16, 0.25);
+  border-radius: 6px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  position: relative;
+  min-height: 32px; /* 🔧 버튼 그룹의 세로 중심 기준(top:16px)이 항상 안정적으로 맞도록 최소 높이 확보 */
+}
+
+/* ── 라벨 ── */
+.label-box {
+  background: var(--body-bg);
+  color: var(--text-sub);
+  font-weight: 600;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  min-width: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.label-box label {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.condition-toggle-chk {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--error);
+  flex-shrink: 0;
+}
+
+/* ── 드롭다운 & 입력창 ── */
+.custom-select, .custom-input {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 8px;
+  font-family: "Noto Sans KR", sans-serif;
+  font-size: 12px;
+  color: var(--text-main);
+  background-color: var(--card-bg);
+  outline: none;
+  transition: border-color 0.2s;
+  min-width: 0;
+}
+
+/* 🔧 select는 브라우저마다(그리고 크롬 업데이트에 따라) 네이티브 화살표 크기/위치가 제멋대로라
+      직접 작은 화살표를 그려 넣고 브라우저 기본 렌더링은 완전히 꺼버린다. */
+select.custom-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 24px; /* 화살표 아이콘과 텍스트가 안 겹치도록 오른쪽 여백 확보 */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%236070A0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px 6px;
+  cursor: pointer;
+}
+
+.custom-select:focus, .custom-input:focus {
+  border-color: var(--accent);
+}
+
+.select-short {
+  width: 96px;
+  flex-shrink: 0;
+}
+
+.custom-input {
+  flex: 1;
+  font-family: "JetBrains Mono", monospace;
+}
+.custom-input::placeholder {
+  color: var(--text-muted);
+  font-family: "Noto Sans KR", sans-serif;
+}
+
+.input-keyword {
+  flex: 1 1 auto; /* 🔧 버튼이 절대위치로 고정되어 있어, 남는 공간을 채우도록 늘어나면 됨 */
+  min-width: 150px;
+}
+
+/* ── 24시간 실시간 범위 표시 뱃지 ── */
+.date-range-badge {
+  flex: 1 1 auto; /* 🔧 버튼이 절대위치로 고정되어 있어, 이제 날짜 박스는 남는 공간을 채우도록 늘어나면 됨 */
+  min-width: 150px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--text-sub);
+  background: var(--body-bg);
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  border-radius: 6px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* 🔧 월 단위 지정 입력창도 남는 공간을 채우도록 늘어남
+      (type="month"은 브라우저가 내부적으로 여백을 더 크게 잡아서, 같은 CSS 패딩을 줘도
+      다른 입력창보다 위아래로 커 보임 - 높이를 직접 고정하고 위아래 패딩을 줄여서 맞춤) */
+#date-month-input {
+  flex: 1 1 auto;
+  min-width: 150px;
+  height: 32px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* ── 직접 지정 기간 선택 그룹 ── */
+.date-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  flex: 1 1 auto; /* 🔧 남는 공간을 채우도록 늘어남 (안의 날짜 칸 2개가 그 공간을 절반씩 나눠 가짐) */
+  min-width: 150px;
+}
+
+.date-picker {
+  width: 128px;
+  flex-shrink: 0;
+  padding: 5px 4px 5px 8px;
+  font-size: 11px;
+  text-align: center;
+  font-family: "JetBrains Mono", monospace;
+  cursor: pointer;
+}
+
+.date-picker::-webkit-calendar-picker-indicator {
+  margin-left: 0;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.date-picker::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+/* ── 커스텀 날짜 표시 트리거 ── */
+.date-display {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 4px;
+  font-size: 10.5px;
+  text-align: center;
+  font-family: "JetBrains Mono", monospace;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--text-main);
+  transition: border-color 0.2s;
+}
+.date-display:hover,
+.date-display:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+.date-display.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.15);
+}
+
+/* ── 커스텀 달력 팝업 ── */
+.calendar-popup {
+  display: none;
+  position: absolute;
+  z-index: 1100;
+  width: 240px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  padding: 10px;
+}
+.calendar-popup.active {
+  display: block;
+}
+
+.calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.calendar-month-year {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.calendar-nav {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: var(--body-bg);
+  border-radius: 5px;
+  color: var(--text-sub);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.calendar-nav:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 2px;
+}
+.calendar-weekdays span {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  font-size: 11px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text-main);
+  border-radius: 50%;
+  cursor: pointer;
+  background: transparent;
+}
+.calendar-day:hover {
+  background: var(--body-bg);
+}
+.calendar-day.other-month {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+.calendar-day.today {
+  border: 1px solid var(--error);
+  color: var(--error);
+  font-weight: 700;
+}
+.calendar-day.selected {
+  background: var(--error);
+  color: #fff;
+  font-weight: 700;
+}
+.calendar-day.disabled {
+  color: var(--text-muted);
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.calendar-day.disabled:hover {
+  background: transparent;
+}
+
+.date-separator {
+  color: var(--text-sub);
+  font-weight: 600;
+  font-size: 12px;
+  padding: 0 1px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── 태그 영역 ── */
+.tag-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+#include-tag-container {
+  order: 99;
+  padding-left: 0; /* 줄바꿈 시 좌측 오버 여백 보정 */
+}
+/* 🔧 태그가 있을 때만 줄바꿈을 강제 - 비어있을 때도 flex-basis:100%가 걸려있으면
+      보이지 않는 빈 줄이 생기면서 row-gap만큼 카드 하단 여백이 커지는 문제가 있었음 */
+#include-tag-container:not(:empty) {
+  flex-basis: 100%;
+  width: 100%;
+  padding-top: 6px;
+}
+
+#exclude-tag-container {
+  order: 0;
+  flex: 1;
+  padding-left: 0;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(91, 141, 239, 0.1);
+  color: var(--accent);
+  border: 1px solid rgba(91, 141, 239, 0.25);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  max-width: 150px;
+}
+
+.tag span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+}
+
+.tag-danger {
+  background: rgba(192, 57, 43, 0.08);
+  color: var(--error);
+  border-color: rgba(192, 57, 43, 0.2);
+}
+
+.tag-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.6;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.tag-close:hover { opacity: 1; }
+
+/* ── 버튼 ── */
+.btn {
+  font-family: "Noto Sans KR", sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-primary { background: var(--accent); color: #FFFFFF; border-color: rgba(0,0,0,0.08); /* 🔧 검색(흰색+테두리)과 시각적 무게감을 맞춰 착시로 커/작아 보이는 것 방지 */ }
+.btn-primary:hover:not(:disabled) { opacity: 0.9; }
+
+.btn-secondary {
+  background: var(--card-bg);
+  border-color: var(--border);
+  color: var(--text-sub);
+}
+.btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+
+.btn-small {
+  padding: 8px 6px; /* 🔧 위아래 패딩을 .btn(검색/다운로드)과 동일하게 맞춰 버튼 높이 자체를 통일 */
+  font-size: 11px;
+  background: var(--body-bg);
+  border: 1px solid var(--border);
+  color: var(--text-sub);
+  flex-shrink: 0;
+  min-width: 46px; /* 🔧 "초기화"(3글자)와 "추가"/"저장"(2글자) 텍스트 길이가 달라도 버튼 크기를 통일 */
+  text-align: center;
+}
+.btn-small:hover:not(:disabled) {
+  background: var(--card-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 🔧 "초기화"는 되돌릴 수 없는 동작이라 다른 두 버튼(추가/저장)과 구분되도록 경고색(빨강) 박스 + 흰 글자로 적용 (다운로드 버튼과 동일한 스타일) */
+#btn-include-tags-reset {
+  background: var(--error);
+  border-color: var(--error);
+  color: #FFFFFF;
+}
+#btn-include-tags-reset:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+/* 🔧 이력 "전체 지우기"도 되돌릴 수 없는 동작이라 동일하게 경고색 적용 */
+#btn-log-clear {
+  background: var(--error);
+  border-color: var(--error);
+  color: #FFFFFF;
+}
+#btn-log-clear:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+/* 🔧 "추가"/"저장"은 검색 버튼(.btn-secondary)과 동일한 스타일로 통일 */
+#btn-include-add,
+#btn-include-save {
+  background: var(--card-bg);
+  border-color: var(--border);
+  color: var(--text-sub);
+}
+#btn-include-add:hover:not(:disabled),
+#btn-include-save:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 🔧 버튼 그룹(검색+다운로드, 초기화+추가+저장)을 줄의 오른쪽 끝에 "절대 위치"로 완전히 고정.
+      margin-left:auto 방식은 옆 요소(셀렉트/입력창) 폭이 바뀔 때마다 재계산되면서
+      미세하게 흔들리는 문제가 있어서, 아예 flex 흐름에서 빼내어 고정시킨다. */
+.row:has(.btn-anchor-end) {
+  padding-right: 156px; /* 초기화+추가+저장(약 150px) 그룹 기준 */
+}
+.row:has(.btn-anchor-end--date) {
+  padding-right: 144px; /* 검색+다운로드(약 140px) 그룹은 이쪽이 더 좁아서 별도로 지정 */
+}
+.btn-anchor-end {
+  position: absolute;
+  right: 0;
+  top: 16px; /* 🔧 아주 살짝 위로 이동 (기존 19px → 16px) */
+  transform: translateY(-50%); /* 버튼 자체 높이가 달라도(.btn vs .btn-small) 항상 그 지점에 중심이 오도록 */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── 모달 팝업 ── */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: rgba(0, 0, 0, 0.4);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+
+.modal-overlay.active {
+  display: flex;
+}
+
+.modal-content {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 20px;
+  width: 320px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-large {
+  width: 380px;
+}
+
+.modal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.modal-desc {
+  font-size: 12px;
+  color: var(--text-sub);
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.modal-mapping-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin: 4px 0;
+}
+
+.modal-mapping-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--body-bg);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.modal-mapping-keyword {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.modal-mapping-select {
+  padding: 4px 8px;
+  font-size: 11px;
+  width: 130px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* ── 액션 이력 목록 (log.html에서 사용 - 별도 독립 iframe) ── */
+.log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.log-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.log-item {
+  background: var(--body-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.log-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.log-item-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #fff;
+  white-space: nowrap;
+}
+.log-badge-black   { background: #333333; }
+.log-badge-red     { background: var(--error); }
+.log-badge-pcHome  { background: #D68910; }
+.log-badge-featuring { background: #B7581E; }
+.log-badge-managedUser { background: #6070A0; }
+.log-badge-whiteOpen { background: #5B8DEF; }
+
+.log-item-time {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.log-item-detail {
+  color: var(--text-sub);
+  word-break: break-all;
+}

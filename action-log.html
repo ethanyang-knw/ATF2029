@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>액션 이력</title>
+  <link rel="stylesheet" href="popup.css">
+  <style>
+    /* 🔧 이 페이지는 검색 팝업(popup.html)과 완전히 별개의 독립 iframe이라, 검색 팝업의
+          고정 폭(600px)/카드 레이아웃과 무관하게 이 창 자신의 카드 하나만 그려주면 된다.
+          이 iframe 자체가 고정 크기(content-main.js에서 지정)라, 카드도 그 안에 꽉 채우고
+          이력 목록만 내부 스크롤로 확인하는 구조로 만든다(내용 길이에 따라 창이 커졌다
+          작아졌다 하지 않도록). */
+    html, body {
+      max-width: none;
+      background: transparent;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+    body {
+      padding: 0;
+    }
+    .log-page-card {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+      padding: 20px;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-sizing: border-box;
+    }
+    /* 🖱️ 제목 줄을 잡고 드래그하면 창을 옮길 수 있음 - 버튼 위에서는 드래그 시작 안 함 */
+    .log-page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: move;
+      flex-shrink: 0;
+    }
+    /* 🔧 제목/설명/버튼은 항상 고정된 자리에, 이력 목록만 남는 공간을 채우며 자체 스크롤 */
+    .log-page-card .modal-title,
+    .log-page-card .modal-desc,
+    .log-page-card .modal-actions {
+      flex-shrink: 0;
+    }
+    .log-page-card .log-list {
+      flex: 1 1 auto;
+      min-height: 0; /* 🔧 flex 자식이 내용 크기만큼 커지려 하지 않고 실제로 줄어들며 스크롤되게 함 */
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="log-page-card">
+    <div class="log-page-header" id="log-page-header">
+      <div class="modal-title">액션 이력 (최근 300건)</div>
+    </div>
+    <div class="modal-desc">블랙/레드글 등록, PC 홈 추천, 작가 리스트 등록 등 실행 이력이에요. 이 컴퓨터에만 저장되고, 다른 사람이나 서버로는 전송되지 않아요.</div>
+
+    <div class="log-list" id="log-list"></div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-small" id="btn-log-clear" title="전체 이력 삭제">전체 지우기</button>
+      <button type="button" class="btn btn-primary" id="btn-log-close">닫기</button>
+    </div>
+  </div>
+
+  <script src="action-log.js"></script>
+</body>
+</html>
