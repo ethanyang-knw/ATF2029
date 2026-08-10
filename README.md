@@ -51,7 +51,6 @@
 ## 권한
 
 - `storage`, `unlimitedStorage`: 액션 이력·검색 조건 등 로컬 저장용
-- `activeTab`: 현재 탭에서 검색 UI를 삽입하기 위함
 - `host_permissions`: `brunch-admin.onkakao.net`, `*.onkakao.net`(운영툴), `script.google.com` 등(구글시트 연동), `brunch.co.kr`(공개 주소 조회용)
 
 ## 알려진 제한사항
