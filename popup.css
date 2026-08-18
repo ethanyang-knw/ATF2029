@@ -1,6 +1,10 @@
-@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
-
+/* 피드백: 외부 구글폰트 @import가 CSP 정책상 차단될 수 있고, 팝업을 열 때마다 외부(구글) 서버로
+   요청이 나가는 문제 → 실제 폰트 파일을 받는 대신, OS에 이미 설치된 폰트로 비슷한 느낌을 내는
+   시스템 폰트 스택으로 교체. -apple-system/시스템 폰트는 대부분 OS에 기본 탑재돼 네트워크 요청이
+   전혀 필요 없다. */
 :root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
   --header-bg:  #000000;
   --tab-bg:     #384660;
   --body-bg:    #EDF0F5;
@@ -26,7 +30,7 @@ html, body {
   height: auto;
   background: var(--body-bg);
   color: var(--text-main);
-  font-family: "Noto Sans KR", sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
 }
 
@@ -60,7 +64,7 @@ body {
   padding: 10px 14px;
   background: var(--header-bg);
   flex-shrink: 0;
-  cursor: move; /* 🔧 헤더를 잡고 드래그해서 팝업 위치 이동 가능 */
+  cursor: move; /* 헤더 드래그로 팝업 이동 */
 }
 
 .header-left { display: flex; align-items: center; gap: 8px; }
@@ -81,12 +85,12 @@ body {
   min-width: 26px;
   padding: 0 6px;
   border: none;
-  background: rgba(255,255,255,0.18); /* 🔧 기존 0.1 → 0.18로 배경을 좀 더 또렷하게 */
+  background: rgba(255,255,255,0.18);
   border-radius: 6px;
-  color: #C8D8F5; /* 🔧 기존 #90A8CC보다 밝게 - 검정 헤더 위에서 더 잘 보이도록 */
+  color: #C8D8F5; /* 헤더 배경 위 가독성 확보 */
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  font-size: 13px; /* 🔧 기존 12px → 13px */
+  font-size: 13px;
   transition: background 0.15s;
   flex-shrink: 0;
 }
@@ -97,9 +101,9 @@ body {
   padding: 0 8px;
 }
 .btn-reset-text span {
-  font-size: 12px; /* 🔧 기존 11px → 12px */
-  font-weight: 600; /* 🔧 기존 500 → 600으로 살짝 굵게, 시인성 보강 */
-  color: #D6E2F7; /* 🔧 기존 #B0C4DE보다 밝게 */
+  font-size: 12px;
+  font-weight: 600;
+  color: #D6E2F7;
 }
 
 /* ── 메인 & 카드 영역 ── */
@@ -122,10 +126,10 @@ body {
   box-shadow: 0 1px 4px rgba(0,0,0,0.04);
   width: 100%;
   box-sizing: border-box;
-  min-height: 50px; /* 🔧 내용이 무엇이든 카드 세 개의 높이를 강제로 동일하게 고정 */
+  min-height: 50px; /* 카드 3개 높이 통일 */
 }
 
-/* 🔧 발행 시각 조건을 꺼두면 사실상 "오늘 날짜"로만 검색된다는 걸 미리 알려주는 안내 문구 */
+/* 발행 시각 조건 해제 시 안내 문구 */
 .date-disabled-note {
   margin-top: 6px;
   padding: 6px 8px;
@@ -136,6 +140,52 @@ body {
   border-radius: 6px;
 }
 
+/* "캐시 무시하고 재검색" 체크박스 - 발행 시각 체크박스 바로 아래 들여쓰기 배치 */
+.force-refresh-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  margin-left: 11px;
+}
+.force-refresh-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-sub);
+  cursor: pointer;
+  user-select: none;
+  width: fit-content;
+}
+.force-refresh-label input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+/* 체크박스 옆 ⓘ 안내 아이콘 - hover/focus 시 상세 설명 표시 */
+.force-refresh-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text-sub);
+  font-size: 9px;
+  font-style: normal;
+  line-height: 1;
+  cursor: help;
+}
+.force-refresh-info:hover,
+.force-refresh-info:focus-visible {
+  background: var(--accent);
+  color: #fff;
+  outline: none;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -143,7 +193,7 @@ body {
   gap: 6px;
   width: 100%;
   position: relative;
-  min-height: 32px; /* 🔧 버튼 그룹의 세로 중심 기준(top:16px)이 항상 안정적으로 맞도록 최소 높이 확보 */
+  min-height: 32px; /* 버튼 그룹 세로 중심 고정용 */
 }
 
 /* ── 라벨 ── */
@@ -182,7 +232,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 8px;
-  font-family: "Noto Sans KR", sans-serif;
+  font-family: var(--font-sans);
   font-size: 12px;
   color: var(--text-main);
   background-color: var(--card-bg);
@@ -191,8 +241,7 @@ body {
   min-width: 0;
 }
 
-/* 🔧 select는 브라우저마다(그리고 크롬 업데이트에 따라) 네이티브 화살표 크기/위치가 제멋대로라
-      직접 작은 화살표를 그려 넣고 브라우저 기본 렌더링은 완전히 꺼버린다. */
+/* select 네이티브 화살표 대신 직접 그린 화살표 사용 (브라우저별 렌더링 차이 제거) */
 select.custom-select {
   appearance: none;
   -webkit-appearance: none;
@@ -216,23 +265,23 @@ select.custom-select {
 
 .custom-input {
   flex: 1;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
 }
 .custom-input::placeholder {
   color: var(--text-muted);
-  font-family: "Noto Sans KR", sans-serif;
+  font-family: var(--font-sans);
 }
 
 .input-keyword {
-  flex: 1 1 auto; /* 🔧 버튼이 절대위치로 고정되어 있어, 남는 공간을 채우도록 늘어나면 됨 */
+  flex: 1 1 auto; /* 절대위치 버튼 제외한 남는 공간 채움 */
   min-width: 150px;
 }
 
 /* ── 24시간 실시간 범위 표시 뱃지 ── */
 .date-range-badge {
-  flex: 1 1 auto; /* 🔧 버튼이 절대위치로 고정되어 있어, 이제 날짜 박스는 남는 공간을 채우도록 늘어나면 됨 */
+  flex: 1 1 auto; /* 절대위치 버튼 제외한 남는 공간 채움 */
   min-width: 150px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-sub);
   background: var(--body-bg);
@@ -243,24 +292,13 @@ select.custom-select {
   white-space: nowrap;
 }
 
-/* 🔧 월 단위 지정 입력창도 남는 공간을 채우도록 늘어남
-      (type="month"은 브라우저가 내부적으로 여백을 더 크게 잡아서, 같은 CSS 패딩을 줘도
-      다른 입력창보다 위아래로 커 보임 - 높이를 직접 고정하고 위아래 패딩을 줄여서 맞춤) */
-#date-month-input {
-  flex: 1 1 auto;
-  min-width: 150px;
-  height: 32px;
-  padding-top: 4px;
-  padding-bottom: 4px;
-}
-
 /* ── 직접 지정 기간 선택 그룹 ── */
 .date-group {
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 4px;
-  flex: 1 1 auto; /* 🔧 남는 공간을 채우도록 늘어남 (안의 날짜 칸 2개가 그 공간을 절반씩 나눠 가짐) */
+  flex: 1 1 auto;
   min-width: 150px;
 }
 
@@ -270,7 +308,7 @@ select.custom-select {
   padding: 5px 4px 5px 8px;
   font-size: 11px;
   text-align: center;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   cursor: pointer;
 }
 
@@ -291,7 +329,7 @@ select.custom-select {
   padding: 8px 4px;
   font-size: 10.5px;
   text-align: center;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   cursor: pointer;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -381,7 +419,7 @@ select.custom-select {
   justify-content: center;
   height: 26px;
   font-size: 11px;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   color: var(--text-main);
   border-radius: 50%;
   cursor: pointer;
@@ -433,16 +471,14 @@ select.custom-select {
   min-width: 0;
 }
 
-#include-tag-container {
+/* AND/OR 셀렉트와 태그를 하나의 묶음으로 감싸서, 줄바꿈이 일어나도 항상 붙어있게 함
+   (각자 별도 flex 항목이면 줄바꿈 시 서로 떨어질 수 있음) */
+.include-match-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   order: 99;
-  padding-left: 0; /* 줄바꿈 시 좌측 오버 여백 보정 */
-}
-/* 🔧 태그가 있을 때만 줄바꿈을 강제 - 비어있을 때도 flex-basis:100%가 걸려있으면
-      보이지 않는 빈 줄이 생기면서 row-gap만큼 카드 하단 여백이 커지는 문제가 있었음 */
-#include-tag-container:not(:empty) {
-  flex-basis: 100%;
-  width: 100%;
-  padding-top: 6px;
 }
 
 #exclude-tag-container {
@@ -492,7 +528,7 @@ select.custom-select {
 
 /* ── 버튼 ── */
 .btn {
-  font-family: "Noto Sans KR", sans-serif;
+  font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 600;
   border-radius: 6px;
@@ -509,7 +545,7 @@ select.custom-select {
   cursor: not-allowed;
 }
 
-.btn-primary { background: var(--accent); color: #FFFFFF; border-color: rgba(0,0,0,0.08); /* 🔧 검색(흰색+테두리)과 시각적 무게감을 맞춰 착시로 커/작아 보이는 것 방지 */ }
+.btn-primary { background: var(--accent); color: #FFFFFF; border-color: rgba(0,0,0,0.08); }
 .btn-primary:hover:not(:disabled) { opacity: 0.9; }
 
 .btn-secondary {
@@ -520,13 +556,13 @@ select.custom-select {
 .btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 
 .btn-small {
-  padding: 8px 6px; /* 🔧 위아래 패딩을 .btn(검색/다운로드)과 동일하게 맞춰 버튼 높이 자체를 통일 */
+  padding: 8px 6px; /* .btn과 높이 통일 */
   font-size: 11px;
   background: var(--body-bg);
   border: 1px solid var(--border);
   color: var(--text-sub);
   flex-shrink: 0;
-  min-width: 46px; /* 🔧 "초기화"(3글자)와 "추가"/"저장"(2글자) 텍스트 길이가 달라도 버튼 크기를 통일 */
+  min-width: 46px; /* 텍스트 길이 달라도 버튼 크기 통일 */
   text-align: center;
 }
 .btn-small:hover:not(:disabled) {
@@ -535,7 +571,7 @@ select.custom-select {
   color: var(--accent);
 }
 
-/* 🔧 "초기화"는 되돌릴 수 없는 동작이라 다른 두 버튼(추가/저장)과 구분되도록 경고색(빨강) 박스 + 흰 글자로 적용 (다운로드 버튼과 동일한 스타일) */
+/* "초기화"는 되돌릴 수 없는 동작이라 경고색으로 구분 */
 #btn-include-tags-reset {
   background: var(--error);
   border-color: var(--error);
@@ -545,17 +581,7 @@ select.custom-select {
   opacity: 0.9;
 }
 
-/* 🔧 이력 "전체 지우기"도 되돌릴 수 없는 동작이라 동일하게 경고색 적용 */
-#btn-log-clear {
-  background: var(--error);
-  border-color: var(--error);
-  color: #FFFFFF;
-}
-#btn-log-clear:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-/* 🔧 "추가"/"저장"은 검색 버튼(.btn-secondary)과 동일한 스타일로 통일 */
+/* "추가"/"저장"은 검색 버튼과 동일 스타일 */
 #btn-include-add,
 #btn-include-save {
   background: var(--card-bg);
@@ -568,9 +594,7 @@ select.custom-select {
   color: var(--accent);
 }
 
-/* 🔧 버튼 그룹(검색+다운로드, 초기화+추가+저장)을 줄의 오른쪽 끝에 "절대 위치"로 완전히 고정.
-      margin-left:auto 방식은 옆 요소(셀렉트/입력창) 폭이 바뀔 때마다 재계산되면서
-      미세하게 흔들리는 문제가 있어서, 아예 flex 흐름에서 빼내어 고정시킨다. */
+/* 버튼 그룹을 줄 오른쪽 끝에 절대 위치로 고정 (옆 요소 폭 변화로 흔들리는 것 방지) */
 .row:has(.btn-anchor-end) {
   padding-right: 156px; /* 초기화+추가+저장(약 150px) 그룹 기준 */
 }
@@ -580,7 +604,7 @@ select.custom-select {
 .btn-anchor-end {
   position: absolute;
   right: 0;
-  top: 16px; /* 🔧 아주 살짝 위로 이동 (기존 19px → 16px) */
+  top: 16px;
   transform: translateY(-50%); /* 버튼 자체 높이가 달라도(.btn vs .btn-small) 항상 그 지점에 중심이 오도록 */
   display: flex;
   align-items: center;
@@ -634,6 +658,13 @@ select.custom-select {
   word-break: break-all;
 }
 
+/* showAlert()의 A()/T() 헬퍼가 만드는 노드용 스타일 */
+#alert-message a {
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .modal-mapping-list {
   display: flex;
   flex-direction: column;
@@ -675,63 +706,4 @@ select.custom-select {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
-}
-
-/* ── 액션 이력 목록 (log.html에서 사용 - 별도 독립 iframe) ── */
-.log-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 4px 0;
-}
-
-.log-empty {
-  padding: 24px 0;
-  text-align: center;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.log-item {
-  background: var(--body-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  font-size: 11.5px;
-  line-height: 1.5;
-}
-
-.log-item-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 2px;
-}
-
-.log-item-badge {
-  font-size: 10.5px;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 999px;
-  color: #fff;
-  white-space: nowrap;
-}
-.log-badge-black   { background: #333333; }
-.log-badge-red     { background: var(--error); }
-.log-badge-pcHome  { background: #D68910; }
-.log-badge-featuring { background: #B7581E; }
-.log-badge-managedUser { background: #6070A0; }
-.log-badge-whiteOpen { background: #5B8DEF; }
-
-.log-item-time {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.log-item-detail {
-  color: var(--text-sub);
-  word-break: break-all;
 }

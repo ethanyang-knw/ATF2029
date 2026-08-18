@@ -4,13 +4,11 @@
   "version": "1.0",
   "description": "운영툴 게시글 조건 검색 확장프로그램",
   "permissions": [
-    "storage",
-    "unlimitedStorage"
+    "storage"
   ],
   "host_permissions": [
     "https://brunch-admin.onkakao.net/*",
-    "https://*.onkakao.net/*",
-    "https://script.google.com/*",
+    "https://script.google.com/a/macros/knworks.co.kr/*",
     "https://script.googleusercontent.com/*",
     "https://brunch.co.kr/@*"
   ],
@@ -23,14 +21,13 @@
   "content_scripts": [
     {
       "matches": [
-        "https://brunch-admin.onkakao.net/*",
-        "https://*.onkakao.net/*"
+        "https://brunch-admin.onkakao.net/*"
       ],
       "js": [
         "console-log.js",
-        "xlsx-writer.js",
         "content-globals.js",
         "content-main.js",
+        "content-actions.js",
         "content-bootstrap.js"
       ],
       "run_at": "document_end"
@@ -40,16 +37,12 @@
     {
       "resources": [
         "console-log.js",
-        "injected-search.js",
-        "injected-actions.js",
+        "injected.js",
         "popup.html",
-        "popup.css",
-        "action-log.html",
-        "action-log.js"
+        "popup.css"
       ],
       "matches": [
-        "https://brunch-admin.onkakao.net/*",
-        "https://*.onkakao.net/*"
+        "https://brunch-admin.onkakao.net/*"
       ]
     }
   ]

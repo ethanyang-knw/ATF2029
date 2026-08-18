@@ -1,26 +1,10 @@
 // console-log.js
-// 🗂️ 검색용 txt 로그 저장 기능 - "혹시 모를 오류에 대응"하기 위해, 확장프로그램이 스스로 찍는
-//    로그(배치 진행/진단/액션 이력/오류 - 사이트 자체 로그는 제외)를 검색 한 번당 모아뒀다가
-//    검색이 끝날 때(성공/실패 모두) 자동으로 .txt로 다운로드한다. 크롬 콘솔은 새로고침하면
-//    사라지지만, 이 파일은 컴퓨터에 남아서 나중에 오류 재현/문의할 때 근거 자료로 쓸 수 있다.
-//
-// ⚠️ action-log.js(별도 액션 이력 조회 창)와는 완전히 다른, 무관한 기능이다 - 이름이 비슷해 보여도
-//    섞이지 않도록 파일을 분리해뒀다.
-//
-// 🌐 이 파일 하나가 격리 world(content-*.js, manifest content_scripts로 로드)와 메인 world
-//    (injected-*.js, content-main.js가 <script>로 동적 주입) 양쪽에 동일하게 로드된다.
-//    두 world는 변수를 직접 공유할 수 없지만, 이 파일은 "console 호출 → 항상 postMessage로
-//    중계 → 같은 파일의 리스너가 그 메시지를 받아 버퍼에 기록"하는 구조라서, 격리 world든
-//    메인 world든 어느 쪽에서 로드되어도 동일하게 동작한다(로드된 그 world 안에서 발생한
-//    console 호출은 스스로 다시 받아서 처리하는 셈). 실제 txt 다운로드(downloadAtfLogBufferAsTxt)는
-//    content-main.js가 격리 world에서 직접 호출하므로, 그 world의 버퍼만 실제로 쓰인다
-//    (메인 world 쪽 버퍼는 아무도 다운로드를 트리거하지 않아 그냥 쌓였다 비워지는 정도로 무해함).
-//
-// ⚠️ 로드 순서: 이 파일은 각 world에서 가장 먼저 로드되어야 한다 - 다른 content-*.js/
-//    injected-*.js 파일들의 console.log/warn/error를 전부 놓치지 않고 캡처하기 위해서.
+// 기능: 검색 중 로그를 모아뒀다가 오류 발생 시 자동으로 txt 파일 저장
+// 격리 world(manifest 로드) + 메인 world(content-main.js가 동적 주입) 양쪽에서 실행됨
 
 const atfLogBuffer = [];
 
+// 로그 한 줄을 타임스탬프와 함께 버퍼에 저장
 function pushToAtfLogBuffer(line) {
   const now = new Date();
   const p2 = (n) => String(n).padStart(2, "0");
@@ -28,17 +12,14 @@ function pushToAtfLogBuffer(line) {
   atfLogBuffer.push(`[${ts}] ${line}`);
 }
 
-function downloadAtfLogBufferAsTxt() {
+// 버퍼를 txt 파일로 다운로드
+// force=false(자동): [ERROR] 있을 때만 저장, force=true(수동 버튼): 항상 저장
+// 피드백: 예전엔 진단 로그만 있어도 자동저장돼 파일이 계속 쌓이던 문제 → ERROR만으로 조건 좁힘
+function downloadAtfLogBufferAsTxt({ force = false } = {}) {
   if (atfLogBuffer.length === 0) return;
 
-  // 🔧 매 검색마다 항상 저장하면 다운로드 폴더에 파일이 계속 쌓여 지저분해진다는 피드백으로,
-  //    "오류(ERROR)"나 "진단 로그(🔍 [진단])"가 하나라도 있는 경우에만 저장하도록 함.
-  //    깨끗하게 끝난 검색은 파일을 안 남기고 버퍼만 비운다.
-  const hasNoteworthyLine = atfLogBuffer.some(
-    line => line.includes("[ERROR]") || line.includes("🔍 [진단]")
-  );
-  if (!hasNoteworthyLine) {
-    atfLogBuffer.length = 0;
+  const hasError = atfLogBuffer.some(line => line.includes("[ERROR]"));
+  if (!force && !hasError) {
     return;
   }
 
@@ -58,14 +39,19 @@ function downloadAtfLogBufferAsTxt() {
   } catch (e) {
     console.error("❌ [atf-log] 로그 txt 저장 실패:", e);
   } finally {
-    atfLogBuffer.length = 0; // 다음 검색을 위해 비움
+    atfLogBuffer.length = 0;
   }
 }
 
-// 🖨️ console.log/warn/error를 오버라이드해 원래 동작은 그대로 유지하면서, 동시에 항상
-//    postMessage(ATF_CONSOLE_LINE)로 중계한다. 격리 world든 메인 world든 같은 window를
-//    공유하므로(콘텐츠 스크립트는 페이지와 JS 변수는 못 나눠 써도 window.postMessage로는
-//    서로 통신 가능), 아래 리스너가 자기 자신이 보낸 메시지까지 그대로 받아서 처리한다.
+// 현재 world 판별용 nonce. 메인 world로 동적 주입될 때만 <script> 태그에 실려 온다
+// (격리 world는 대응하는 <script> 태그가 없어 document.currentScript가 항상 null)
+// 피드백: 콘솔로그가 매번 무조건 postMessage로 왕복해 성능 저하 + 페이지의 다른 스크립트도
+// 로그를 엿볼 수 있던 문제 → 같은 world는 직접 기록, 메인→격리 전달만 nonce로 검증 후 중계
+const ATF_NONCE = (document.currentScript && document.currentScript.dataset)
+  ? document.currentScript.dataset.atfNonce || null
+  : null;
+const IS_MAIN_WORLD = !!ATF_NONCE;
+
 const __atfOrigConsoleLog = console.log.bind(console);
 const __atfOrigConsoleWarn = console.warn.bind(console);
 const __atfOrigConsoleError = console.error.bind(console);
@@ -73,27 +59,36 @@ const __atfStringifyArg = (a) => {
   if (typeof a === "string") return a;
   try { return JSON.stringify(a); } catch (e) { return String(a); }
 };
-const __atfRelayConsoleLine = (line) => {
-  try {
-    window.postMessage({ type: "ATF_CONSOLE_LINE", message: line }, "*");
-  } catch (e) { /* 무시 - 로그 중계 실패가 실제 동작에 영향 주지 않도록 */ }
+
+// 이 world의 로그를 자신의 버퍼에 직접 기록. 메인 world일 때만 격리 world로 nonce와 함께 중계
+const __atfRecordLine = (line) => {
+  pushToAtfLogBuffer(line);
+  if (IS_MAIN_WORLD) {
+    try {
+      window.postMessage({ type: "ATF_CONSOLE_LINE", nonce: ATF_NONCE, message: line }, "*");
+    } catch (e) { /* 무시 */ }
+  }
 };
+
+// console.log/warn/error 오버라이드 - 원래 동작 유지 + 버퍼 기록
 console.log = (...args) => {
   __atfOrigConsoleLog(...args);
-  __atfRelayConsoleLine(args.map(__atfStringifyArg).join(" "));
+  __atfRecordLine(args.map(__atfStringifyArg).join(" "));
 };
 console.warn = (...args) => {
   __atfOrigConsoleWarn(...args);
-  __atfRelayConsoleLine("[WARN] " + args.map(__atfStringifyArg).join(" "));
+  __atfRecordLine("[WARN] " + args.map(__atfStringifyArg).join(" "));
 };
 console.error = (...args) => {
   __atfOrigConsoleError(...args);
-  __atfRelayConsoleLine("[ERROR] " + args.map(__atfStringifyArg).join(" "));
+  __atfRecordLine("[ERROR] " + args.map(__atfStringifyArg).join(" "));
 };
 
-// 🔐 자기 자신(같은 window)이 보낸 메시지만 신뢰 - 다른 프레임/스크립트가 위조한 메시지는 무시.
+// 격리 world 수신 리스너 - nonce가 자신의 window.__ATF_NONCE__와 일치하는 메시지만 신뢰
+// (메인 world 인스턴스는 이 전역이 없어 자기 메시지를 다시 받는 일도 자연히 방지됨)
 window.addEventListener("message", (event) => {
-  if (!event.data || event.data.type !== "ATF_CONSOLE_LINE") return;
   if (event.source !== window || event.origin !== location.origin) return;
+  if (!event.data || event.data.type !== "ATF_CONSOLE_LINE") return;
+  if (event.data.nonce !== window.__ATF_NONCE__) return;
   pushToAtfLogBuffer(event.data.message);
 });

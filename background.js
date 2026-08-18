@@ -1,15 +1,31 @@
 // background.js
-// 게시글 다운로드(CSV) 시, @@ID 형태 주소가 실제로 리다이렉트되는
-// 최종 브런치 주소(vanity handle, 예: /@iammerry)를 알아내기 위한 서비스워커.
-//
-// content script(페이지 컨텍스트)에서 brunch.co.kr로 fetch를 하면 페이지의
-// origin(brunch-admin.onkakao.net) 기준 CORS 정책에 막히지만, 확장프로그램의
-// 백그라운드 컨텍스트는 manifest.json의 host_permissions에 등록된 도메인에 한해
-// CORS 제약 없이 요청할 수 있어서 여기서 대신 조회한다.
+// 기능: 서비스워커. userId → 브런치 공개 주소(vanity handle) 조회
 
-const MAX_CONCURRENT_REQUESTS = 6; // 🔧 한 번에 너무 많은 요청이 나가지 않도록 동시 실행 개수 제한
-const REQUEST_TIMEOUT_MS = 8000;   // 🔧 응답이 없는 요청이 다운로드 전체를 무한정 붙잡지 않도록 타임아웃
+const MAX_CONCURRENT_REQUESTS = 6;
+const REQUEST_TIMEOUT_MS = 8000;
+const HANDLE_CACHE_KEY = "atf_handle_cache";
 
+// chrome.storage.local에서 핸들 캐시 불러오기
+async function loadHandleCache() {
+  try {
+    const r = await chrome.storage.local.get(HANDLE_CACHE_KEY);
+    return (r && r[HANDLE_CACHE_KEY]) || {};
+  } catch (e) {
+    console.warn("⚠️ [background.js] 핸들 캐시 로드 실패, 빈 캐시로 진행:", e);
+    return {};
+  }
+}
+
+async function saveHandleCache(cache) {
+  try {
+    await chrome.storage.local.set({ [HANDLE_CACHE_KEY]: cache });
+  } catch (e) {
+    console.warn("⚠️ [background.js] 핸들 캐시 저장 실패(조회 결과 자체는 정상 반환됨):", e);
+  }
+}
+
+// userId+articleNo로 실제 공개 주소(handle) 1건 조회
+// 피드백: GET으로 페이지 전체를 받아서 버리던 것 → HEAD 요청으로 트래픽 절감
 async function resolveOneHandle(userId, articleNo) {
   const safeUserId = encodeURIComponent(userId);
   const safeArticleNo = encodeURIComponent(articleNo);
@@ -19,10 +35,10 @@ async function resolveOneHandle(userId, articleNo) {
 
   try {
     const res = await fetch(`https://brunch.co.kr/@@${safeUserId}/${safeArticleNo}`, {
+      method: "HEAD",
       redirect: "follow",
       signal: controller.signal
     });
-    // res.url은 리다이렉트를 모두 따라간 뒤의 최종 주소
     const match = res.url.match(/^https:\/\/brunch\.co\.kr\/@([^/?#]+)/);
     return match ? match[1] : null;
   } catch (e) {
@@ -33,33 +49,78 @@ async function resolveOneHandle(userId, articleNo) {
   }
 }
 
-// 🔧 동시 실행 개수를 MAX_CONCURRENT_REQUESTS로 제한하는 간단한 워커 풀
-async function resolveHandlesWithConcurrencyLimit(items) {
+// 여러 건을 동시 6개로 제한해서 조회하는 워커 풀. 캐시 적중분은 네트워크 요청 없이 즉시 반환
+// 피드백: 매 다운로드마다 같은 작가를 재조회하던 것 → chrome.storage.local 캐싱 + 동시성 제한 추가
+// onProgress(done, total): 대량 다운로드 시 진행률 표시용 콜백
+async function resolveHandlesWithConcurrencyLimit(items, onProgress) {
+  const cache = await loadHandleCache();
   const handles = {};
-  let cursor = 0;
+  const todo = [];
+  let doneCount = 0;
 
+  for (const { userId, articleNo } of items) {
+    if (!userId || !articleNo) continue;
+    if (handles[userId] !== undefined) continue;
+    if (cache[userId]) {
+      handles[userId] = cache[userId];
+      doneCount++;
+      continue;
+    }
+    handles[userId] = null; // 슬롯 선점 - 중복 조회 방지
+    todo.push({ userId, articleNo });
+  }
+
+  const totalUnique = doneCount + todo.length;
+  if (onProgress) onProgress(doneCount, totalUnique);
+
+  let cursor = 0;
   async function worker() {
-    while (cursor < items.length) {
-      const { userId, articleNo } = items[cursor++];
-      if (!userId || !articleNo || handles[userId] !== undefined) continue;
-      handles[userId] = await resolveOneHandle(userId, articleNo);
+    while (cursor < todo.length) {
+      const { userId, articleNo } = todo[cursor++];
+      const handle = await resolveOneHandle(userId, articleNo);
+      handles[userId] = handle;
+      if (handle) cache[userId] = handle;
+      doneCount++;
+      if (onProgress) onProgress(doneCount, totalUnique);
     }
   }
 
-  const workerCount = Math.min(MAX_CONCURRENT_REQUESTS, items.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  const workerCount = Math.min(MAX_CONCURRENT_REQUESTS, todo.length);
+  if (workerCount > 0) {
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    await saveHandleCache(cache);
+  }
 
   return handles;
 }
 
+// 단발성 조회 (멤버십 전문 조회 등 1건짜리 즉시 조회용, 진행률 불필요)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== "RESOLVE_BRUNCH_HANDLES") return;
-
   const items = Array.isArray(message.items) ? message.items : [];
-
   resolveHandlesWithConcurrencyLimit(items).then((handles) => {
     sendResponse({ handles });
   });
+  return true;
+});
 
-  return true; // 비동기 응답(sendResponse)을 위해 true 반환 필수
+// 포트 기반 진행률 스트리밍 조회 (대량 다운로드용)
+// 피드백: "다운로드가 오래 걸리는데 멈춘 건지 알 수 없다" → 진행 상황을 실시간 전송하도록 추가
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "resolveHandlesProgress") return;
+
+  port.onMessage.addListener(async (message) => {
+    if (!message || message.type !== "RESOLVE_BRUNCH_HANDLES") return;
+    const items = Array.isArray(message.items) ? message.items : [];
+
+    try {
+      const handles = await resolveHandlesWithConcurrencyLimit(items, (done, total) => {
+        try { port.postMessage({ type: "PROGRESS", done, total }); } catch (e) { /* 팝업 닫힘 무시 */ }
+      });
+      port.postMessage({ type: "DONE", handles });
+    } catch (e) {
+      console.warn("⚠️ [background.js] 진행률 포함 핸들 조회 실패:", e);
+      port.postMessage({ type: "DONE", handles: {} });
+    }
+  });
 });

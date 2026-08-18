@@ -1,5 +1,20 @@
 // popup.js
+// 기능: 검색 조건 입력 팝업 UI - 조건 수집, 검색/다운로드 요청, 결과 표시, 구글시트 연동
 document.addEventListener("DOMContentLoaded", () => {
+  // XSS 방지용 DOM 빌더 헬퍼 - 동적 값이 항상 텍스트로만 삽입되도록 함
+  // 피드백: showAlert()가 innerHTML을 써서 구글시트 키워드 등 동적 값이 스크립트로 해석될 수 있었음
+  const T = (text) => document.createTextNode(String(text ?? ""));
+  const B = (text) => { const e = document.createElement("b"); e.textContent = text; return e; };
+  const BR = () => document.createElement("br");
+  const A = (href, text) => {
+    const a = document.createElement("a");
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = text;
+    return a;
+  };
+
   const GOOGLE_SCRIPT_URL = "https://script.google.com/a/macros/knworks.co.kr/s/AKfycbyuSEKNemIfwbXrw28R3VIXw6zZZSCr9NU16_NFN85hI62c524YeGfJO4TGgIkRNg5D/exec";
   const SPREADSHEET_ID = "1pFRSpbsbe7vVCtY8SuzOAcJNaQEapVrxXgX9CqAO1BI";
 
@@ -10,11 +25,10 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   let currentFetchingGid = null;
-  let searchTimeoutId = null; // 🔧 검색 응답이 없을 때를 대비한 타임아웃 안전장치
+  let searchTimeoutId = null;
+  let downloadTimeoutId = null;
 
-  // 🔧 Google Apps Script는 동시 요청이 너무 많이 몰리면 리다이렉트 처리가 꼬여 404가 나는 경우가
-  //    있어서, 완전 병렬(Promise.all 전부 동시) 대신 동시 실행 개수를 제한해서 처리한다.
-  //    (background.js의 MAX_CONCURRENT_REQUESTS와 동일한 패턴)
+  // 동시 요청 개수 제한 워커 풀 (Apps Script가 완전 병렬 요청 시 404를 낼 때가 있어서)
   const APPS_SCRIPT_MAX_CONCURRENT = 2;
   async function runWithConcurrencyLimit(items, worker, maxConcurrent = APPS_SCRIPT_MAX_CONCURRENT) {
     let cursor = 0;
@@ -29,10 +43,12 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // DOM 요소 참조
+  const btnLogSave = document.getElementById("btn-log-save");
   const btnReset = document.getElementById("btn-reset");
   const btnClose = document.getElementById("btn-close");
   const btnSearch = document.getElementById("btn-search");
   const btnDownload = document.getElementById("btn-download");
+  const chkForceRefresh = document.getElementById("chk-force-refresh");
 
   const chkDisableDate = document.getElementById("chk-disable-date");
   const chkDisableInclude = document.getElementById("chk-disable-include");
@@ -40,18 +56,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const dateDisabledNote = document.getElementById("date-disabled-note");
 
-  // 🔧 발행 시각 조건을 꺼두면(포함/제외 조건만으로 검색) 서버 조회 기본 범위가 "최근 1일"이라
-  //    사실상 오늘 날짜로만 검색되는 셈 - 그 사실을 미리 안내해서 "왜 결과가 이렇게 적지?" 하는
-  //    혼란을 방지한다.
+  // 발행 시각 조건 끄면 기본 조회범위가 최근 1일로 좁혀짐을 미리 안내
   function updateDateDisabledNote() {
     if (!dateDisabledNote) return;
     dateDisabledNote.style.display = chkDisableDate?.checked ? "none" : "block";
   }
   chkDisableDate?.addEventListener("change", updateDateDisabledNote);
-  updateDateDisabledNote(); // 초기 상태 반영
+  updateDateDisabledNote();
 
   const dateSelect = document.getElementById("date-select");
-  const dateMonthInput = document.getElementById("date-month-input");
   const dateRangeText = document.getElementById("date-range-text");
   const dateInputGroup = document.getElementById("date-input-group");
   const dateStart = document.getElementById("date-start");
@@ -65,6 +78,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const calNext = document.getElementById("cal-next");
 
   const includeSelect = document.getElementById("include-select");
+  const includeMatchMode = document.getElementById("include-match-mode");
   const sheetSelect = document.getElementById("sheet-select");
   const keywordSelect = document.getElementById("keyword-select");
   const includeInput = document.getElementById("include-input");
@@ -77,7 +91,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnIncludeSave = document.getElementById("btn-include-save");
   const btnIncludeTagsReset = document.getElementById("btn-include-tags-reset");
 
-  // 모달 요소 참조
   const sheetMappingModal = document.getElementById("sheet-mapping-modal");
   const modalMappingList = document.getElementById("modal-mapping-list");
   const btnModalCancel = document.getElementById("btn-modal-cancel");
@@ -88,18 +101,16 @@ document.addEventListener("DOMContentLoaded", () => {
   const alertMessage = document.getElementById("alert-message");
   const btnAlertClose = document.getElementById("btn-alert-close");
 
-  const btnLog = document.getElementById("btn-log");
-
   const searchLoadingBox = document.getElementById("search-loading-box");
   const searchLogBox = document.getElementById("search-log-box");
+  const loadingBoxText = document.getElementById("loading-box-text");
+  const DEFAULT_LOADING_TEXT = "🔍 전체 페이지 데이터를 탐색 및 필터링하는 중입니다... 잠시만 기다려주세요.";
 
-  // 🖱️ 헤더 드래그로 팝업 자유 이동
-  //    (iframe 내부에서는 iframe 자체를 못 옮기므로, 시작 지점만 부모(content.js)에 알려주고
-  //     실제 이동은 top window에서 처리)
+  // 헤더 드래그로 팝업 이동 (실제 이동은 부모 프레임에서 처리)
   const headerDragArea = document.querySelector(".header");
   headerDragArea?.addEventListener("mousedown", (e) => {
-    if (e.target.closest("button")) return; // 버튼 클릭 시엔 드래그 시작하지 않음
-    e.preventDefault(); // 드래그 중 텍스트가 선택되는 것 방지
+    if (e.target.closest("button")) return;
+    e.preventDefault();
     window.parent.postMessage({
       type: "DRAG_START",
       x: e.clientX,
@@ -107,38 +118,34 @@ document.addEventListener("DOMContentLoaded", () => {
     }, "*");
   });
 
-  // 📢 커스텀 알림 팝업 함수
-  function showAlert(title, messageHtml) {
+  // 결과 알림 팝업 - 노드 배열을 받아 replaceChildren으로 렌더 (innerHTML 미사용)
+  function showAlert(title, parts) {
     if (alertTitle) alertTitle.textContent = title;
-    if (alertMessage) alertMessage.innerHTML = messageHtml;
+    if (alertMessage) {
+      alertMessage.replaceChildren();
+      [].concat(parts).forEach(p => {
+        alertMessage.appendChild(typeof p === "string" ? T(p) : p);
+      });
+    }
     if (alertModal) alertModal.classList.add("active");
   }
 
   btnAlertClose?.addEventListener("click", () => {
     alertModal?.classList.remove("active");
-    sendHeightToParent(); // 🔧 모달이 닫힌 뒤 실제 콘텐츠 높이로 재계산
+    sendHeightToParent();
   });
 
-  // 📋 이력 창은 검색 팝업(이 iframe)과 완전히 별개의 독립 iframe(action-log.html)으로 뜨도록
-  //    분리했다 - 검색 팝업 안에 모달로 넣으면 이력이 길어질 때 iframe 전체(=검색창)가
-  //    같이 커져버리는 문제가 있었어서, 부모(content.js)에게 별도 창을 열어달라고만 요청한다.
-  btnLog?.addEventListener("click", () => {
-    window.parent.postMessage({ type: "OPEN_LOG_VIEW" }, "*");
-  });
-
-  // 🔄 조건 초기화 함수
+  // 조건 초기화
   function resetAllConditions() {
-    // 🔧 체크 = 조건 적용(기본값), 체크 해제 = 조건 제외 → 초기화 시 전체 체크 상태로 복원
     if (chkDisableDate) chkDisableDate.checked = true;
     if (chkDisableInclude) chkDisableInclude.checked = true;
     if (chkDisableExclude) chkDisableExclude.checked = true;
-    updateDateDisabledNote(); // 🔧 체크 상태를 되돌렸으니 안내 문구도 다시 숨김
+    updateDateDisabledNote();
 
     if (dateSelect) {
       dateSelect.value = "24h";
       dateSelect.dispatchEvent(new Event("change"));
     }
-    if (dateMonthInput) dateMonthInput.value = "";
     if (dateStart) dateStart.value = "";
     if (dateEnd) dateEnd.value = "";
     if (dateStartDisplay) dateStartDisplay.textContent = "";
@@ -149,14 +156,22 @@ document.addEventListener("DOMContentLoaded", () => {
       includeSelect.dispatchEvent(new Event("change"));
     }
     if (includeTagContainer) includeTagContainer.innerHTML = "";
+    if (includeMatchMode) includeMatchMode.value = "OR";
 
     if (excludeSelect) excludeSelect.value = "";
     if (excludeTagContainer) excludeTagContainer.innerHTML = "";
+
+    if (chkForceRefresh) chkForceRefresh.checked = false;
 
     if (searchLoadingBox) searchLoadingBox.style.display = "none";
 
     window.parent.postMessage({ type: "RESET_FILTER" }, "*");
   }
+
+  // 로그 저장 버튼 - 실제 저장은 content-main.js가 격리 world 로그 버퍼로 수행
+  btnLogSave?.addEventListener("click", () => {
+    window.parent.postMessage({ type: "REQUEST_LOG_SAVE" }, "*");
+  });
 
   btnReset?.addEventListener("click", () => {
     resetAllConditions();
@@ -166,26 +181,42 @@ document.addEventListener("DOMContentLoaded", () => {
     window.parent.postMessage({ type: "CLOSE_MODAL" }, "*");
   });
 
+  // 다운로드 버튼 - 검색과 동일한 로딩 박스를 재사용해 진행 상황 표시
+  // 피드백: 다운로드 중 화면에 아무 표시가 없어 "멈춘 건가" 오해하기 쉬웠음 → 진행 안내 추가
   btnDownload?.addEventListener("click", () => {
+    if (loadingBoxText) loadingBoxText.textContent = "📤 다운로드를 준비하는 중입니다... 잠시만 기다려주세요.";
+    if (searchLoadingBox) searchLoadingBox.style.display = "block";
+    if (searchLogBox) {
+      searchLogBox.innerHTML = "";
+      searchLogBox.style.display = "block";
+      sendHeightToParent();
+    }
+
+    if (downloadTimeoutId) clearTimeout(downloadTimeoutId);
+    downloadTimeoutId = setTimeout(() => {
+      if (searchLoadingBox) searchLoadingBox.style.display = "none";
+      if (loadingBoxText) loadingBoxText.textContent = DEFAULT_LOADING_TEXT;
+      sendHeightToParent();
+      showAlert("응답 없음", [T("다운로드 응답을 받지 못했습니다."), BR(), T("페이지를 새로고침한 후 다시 시도해 주세요.")]);
+      downloadTimeoutId = null;
+    }, 600000);
+
     window.parent.postMessage({ type: "REQUEST_DOWNLOAD" }, "*");
   });
 
-  // 🔧 발행 시각 조건만 추출 (검색/개수확인 둘 다에서 재사용)
+  // 발행 시각 조건 수집 (검색 시 재사용)
   function collectDateParams() {
     const isDateEnabled = chkDisableDate?.checked;
     return {
       dateEnabled: isDateEnabled,
       dateType: (isDateEnabled && dateSelect) ? dateSelect.value : "",
       dateStart: (isDateEnabled && dateStart) ? dateStart.value : "",
-      dateEnd: (isDateEnabled && dateEnd) ? dateEnd.value : "",
-      dateMonth: (isDateEnabled && dateMonthInput) ? dateMonthInput.value : ""
+      dateEnd: (isDateEnabled && dateEnd) ? dateEnd.value : ""
     };
   }
 
-  // 🔍 [검색 버튼] 검색 실행
+  // 검색 버튼 - 미래 날짜 검증 후 조건을 모아 부모에게 검색 요청
   btnSearch?.addEventListener("click", () => {
-    // 🔧 검색을 실제로 시작하기 전에, "직접 지정" 기간이나 "월 단위 지정"에 아직 발생하지 않은
-    //    미래 날짜/월이 끼어있지는 않은지 먼저 확인 (문제 있으면 로딩 표시 없이 바로 경고)
     const dateParamsCheck = collectDateParams();
     if (dateParamsCheck.dateEnabled && dateParamsCheck.dateType === "direct") {
       const today = new Date();
@@ -194,18 +225,12 @@ document.addEventListener("DOMContentLoaded", () => {
       const endCheck = parseDateValue(dateParamsCheck.dateEnd);
 
       if ((startCheck && startCheck > todayDateOnly) || (endCheck && endCheck > todayDateOnly)) {
-        showAlert("날짜 확인 필요", "아직 발생하지 않은 미래 날짜가 선택되어 있어요.<br>발행 시각 기간을 다시 확인해 주세요.");
-        return;
-      }
-    }
-    if (dateParamsCheck.dateEnabled && dateParamsCheck.dateType === "month" && dateParamsCheck.dateMonth) {
-      const currentMonthStr = getCurrentMonthValue();
-      if (dateParamsCheck.dateMonth > currentMonthStr) {
-        showAlert("날짜 확인 필요", "아직 발생하지 않은 미래 월이 선택되어 있어요.<br>발행 시각 기간을 다시 확인해 주세요.");
+        showAlert("날짜 확인 필요", [T("아직 발생하지 않은 미래 날짜가 선택되어 있어요."), BR(), T("발행 시각 기간을 다시 확인해 주세요.")]);
         return;
       }
     }
 
+    if (loadingBoxText) loadingBoxText.textContent = DEFAULT_LOADING_TEXT;
     if (searchLoadingBox) searchLoadingBox.style.display = "block";
     if (searchLogBox) {
       searchLogBox.innerHTML = "";
@@ -213,22 +238,17 @@ document.addEventListener("DOMContentLoaded", () => {
       sendHeightToParent();
     }
 
-    // 🔧 페이지 수가 앞으로 계속 늘어날 수 있어 마지막 페이지까지 수집하도록 바뀌었으므로,
-    //    타임아웃을 240초(4분)로 넉넉하게 설정 (그 안에 응답 없으면 자동 해제)
     if (searchTimeoutId) clearTimeout(searchTimeoutId);
     searchTimeoutId = setTimeout(() => {
       if (searchLoadingBox) searchLoadingBox.style.display = "none";
-      sendHeightToParent(); // 🔧 타임아웃 시에도 높이 재계산
-      showAlert("응답 없음", "검색 응답을 받지 못했습니다.<br>페이지를 새로고침한 후 다시 시도해 주세요.");
+      sendHeightToParent();
+      showAlert("응답 없음", [T("검색 응답을 받지 못했습니다."), BR(), T("페이지를 새로고침한 후 다시 시도해 주세요.")]);
       searchTimeoutId = null;
     }, 240000);
 
-    // 🔧 체크 = 조건 적용, 체크 해제 = 조건 제외
     const isIncludeEnabled = chkDisableInclude?.checked;
     const isExcludeEnabled = chkDisableExclude?.checked;
 
-    // 🔧 각 태그의 카테고리(G.키워드/제목/키워드/매거진/작가/제목+키워드)를 함께 전달해서
-    //    content.js에서 카테고리에 맞는 필드만 매칭하도록 함
     const includeTags = (isIncludeEnabled && includeTagContainer)
       ? Array.from(includeTagContainer.querySelectorAll(".tag")).map(tagEl => ({
           text: tagEl.querySelector("span")?.textContent.trim() || "",
@@ -240,7 +260,7 @@ document.addEventListener("DOMContentLoaded", () => {
       ? Array.from(excludeTagContainer.querySelectorAll(".tag")).map(
           tagEl => tagEl.dataset.value || tagEl.querySelector("span")?.textContent.trim() || ""
         )
-      : []; // 🔧 content.js의 managedUserType 코드값과 매칭되도록 data-value 우선 사용
+      : [];
 
     const dateParams = collectDateParams();
 
@@ -250,65 +270,73 @@ document.addEventListener("DOMContentLoaded", () => {
         includeEnabled: isIncludeEnabled,
         excludeEnabled: isExcludeEnabled,
         includeTags: includeTags,
+        includeMatchMode: includeMatchMode?.value === "AND" ? "AND" : "OR",
         excludeUserTypes: excludeUserTypes,
+        forceRefresh: !!chkForceRefresh?.checked,
         ...dateParams
       }
     }, "*");
   });
 
-  // 📥 검색 결과 메세지 수신
+  // 부모(content-main.js)로부터 오는 검색/다운로드 진행 및 결과 메시지 수신
   window.addEventListener("message", (event) => {
-    // 🔐 이 iframe의 부모(content.js가 실행 중인 페이지)에서 온 메시지만 신뢰한다.
-    //    출처 origin은 사이트마다(브런치 운영툴의 서브도메인 등) 달라질 수 있어 고정 문자열
-    //    비교 대신, "진짜 부모 프레임에서 왔는가"(event.source === window.parent)로 검증한다.
     if (event.source !== window.parent) return;
 
-    if (event.data && event.data.type === "SEARCH_PROGRESS") {
+    if (event.data && (event.data.type === "SEARCH_PROGRESS" || event.data.type === "DOWNLOAD_PROGRESS")) {
       if (searchLogBox) {
         const line = document.createElement("div");
         line.textContent = event.data.message;
         searchLogBox.appendChild(line);
-        searchLogBox.scrollTop = searchLogBox.scrollHeight; // 항상 최신 로그로 자동 스크롤
-        sendHeightToParent(); // 🔧 로그 박스가 160px까지 커지는 동안 iframe 높이도 함께 갱신
+        searchLogBox.scrollTop = searchLogBox.scrollHeight;
+        sendHeightToParent();
       }
       return;
     }
 
     if (event.data && event.data.type === "SEARCH_RESULT_COUNT") {
-      if (searchTimeoutId) { clearTimeout(searchTimeoutId); searchTimeoutId = null; } // 🔧 정상 응답 시 타임아웃 해제
+      if (searchTimeoutId) { clearTimeout(searchTimeoutId); searchTimeoutId = null; }
       if (searchLoadingBox) searchLoadingBox.style.display = "none";
-      sendHeightToParent(); // 🔧 로딩 박스가 사라진 만큼 iframe 높이를 즉시 재계산
+      sendHeightToParent();
 
       if (event.data.error) {
-        showAlert("검색 실패", event.data.error);
+        showAlert("검색 실패", [T(event.data.error)]);
       } else {
-        let msg = `총 <b>${event.data.count}건</b>의 게시글이 검색되었습니다.`;
+        const parts = [T("총 "), B(`${event.data.count}건`), T("의 게시글이 검색되었습니다.")];
         if (event.data.fromCache) {
-          msg += `<br><br>⚡ 같은 기간으로 이전에 받아둔 데이터를 재사용해서 즉시 조회했어요.`;
+          parts.push(BR(), BR(), T("⚡ 같은 기간으로 이전에 받아둔 데이터를 재사용해서 즉시 조회했어요."));
         }
         if (event.data.usedDefaultRange) {
-          const days = event.data.lookbackDays || 1; // 🔧 기본 조회 범위가 1일로 바뀌었으므로 fallback도 맞춤(예전 90일 시절 잔재)
-          msg += `<br><br>※ 발행 시각 조건 없이 검색하면 속도를 위해 기본적으로 <b>최근 ${days}일</b> 게시글만 조회됩니다.<br>더 오래된 글도 찾으시려면 발행 시각을 <b>직접 지정</b>으로 설정해서 검색해 주세요.`;
+          const days = event.data.lookbackDays || 1;
+          parts.push(
+            BR(), BR(),
+            T("※ 발행 시각 조건 없이 검색하면 속도를 위해 기본적으로 "), B(`최근 ${days}일`), T(" 게시글만 조회됩니다."),
+            BR(),
+            T("더 오래된 글도 찾으시려면 발행 시각을 "), B("직접 지정"), T("으로 설정해서 검색해 주세요.")
+          );
         }
-        showAlert("검색 완료", msg);
+        showAlert("검색 완료", parts);
       }
     }
 
     if (event.data && event.data.type === "DOWNLOAD_RESULT") {
+      if (downloadTimeoutId) { clearTimeout(downloadTimeoutId); downloadTimeoutId = null; }
+      if (searchLoadingBox) searchLoadingBox.style.display = "none";
+      if (loadingBoxText) loadingBoxText.textContent = DEFAULT_LOADING_TEXT;
+      sendHeightToParent();
+
       if (event.data.error) {
-        showAlert("다운로드 실패", event.data.error);
+        showAlert("다운로드 실패", [T(event.data.error)]);
       } else {
-        showAlert("다운로드 완료", `총 <b>${event.data.count}건</b>의 결과가 엑셀(xlsx) 파일로 다운로드되었습니다.`);
+        showAlert("다운로드 완료", [T("총 "), B(`${event.data.count}건`), T("의 결과가 엑셀(xlsx) 파일로 다운로드되었습니다.")]);
       }
     }
   });
 
-  // 📥 구글 앱스 스크립트 파라미터 규격(targetGid, sheetName) 맞춤 수집 함수
+  // 구글 앱스 스크립트에서 기존 키워드 조회
   async function getExistingKeywords(targetGid, sheetName = "") {
     if (!GOOGLE_SCRIPT_URL) return [];
 
     try {
-      // 💡 Code.gs의 e.parameter.targetGid 및 sheetName 파라미터에 정확하게 맞춰 요청!
       const fetchUrl = `${GOOGLE_SCRIPT_URL}?targetGid=${encodeURIComponent(targetGid)}&sheetName=${encodeURIComponent(sheetName)}`;
 
       const response = await fetch(fetchUrl, {
@@ -343,9 +371,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (currentFetchingGid !== targetGid) return;
 
     if (keywords.length > 0) {
-      // 🔧 innerHTML 문자열 조합 대신 <option> 엘리먼트를 직접 생성 - keywords는 다른
-      //    협업자도 편집 가능한 구글시트에서 오는 값이라, 악성 값이 섞여있어도 태그/속성으로
-      //    해석되지 않고 항상 순수 텍스트(선택지)로만 표시되도록 함
+      // option 엘리먼트 직접 생성 - 구글시트에서 온 값이 태그로 해석되지 않도록
       keywordSelect.innerHTML = "";
       const defaultOpt = document.createElement("option");
       defaultOpt.value = "";
@@ -383,14 +409,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // 태그 DOM 생성 - 사용자 입력/구글시트 값이 항상 텍스트로만 삽입되도록 요소 직접 생성
   function createTag(text, isDanger = false, value = null) {
     const newTag = document.createElement("div");
     newTag.className = isDanger ? "tag tag-danger" : "tag";
-    if (value) newTag.dataset.value = value; // 🔧 실제 매칭용 코드값(white/gray/black/red 등) 보관
+    if (value) newTag.dataset.value = value;
 
-    // 🔧 innerHTML 템플릿 문자열 대신 요소를 직접 만들어서 text를 삽입 - text가 사용자 직접
-    //    입력이거나(포함 조건 키워드) 구글시트에서 가져온 값이라 악성 HTML이 섞여있어도
-    //    태그/속성으로 해석되지 않고 항상 순수 텍스트로만 표시되도록 함
     const textSpan = document.createElement("span");
     textSpan.textContent = text;
 
@@ -441,9 +465,9 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ── 1-1. 커스텀 달력 팝업 (직접 지정) ──
-  let calActiveField = null; // 'start' | 'end'
+  let calActiveField = null;
   let calViewDate = new Date();
-  const MAX_DIRECT_RANGE_DAYS = 31; // 🔧 직접 지정 최대 기간(시작일로부터 최대 한 달=31일)
+  const MAX_DIRECT_RANGE_DAYS = 3; // 직접 지정 최대 기간 (일)
 
   const pad2 = (n) => String(n).padStart(2, '0');
   const formatDateValue = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -461,6 +485,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return new Date(y, m - 1, d);
   }
 
+  // 시작일 선택 시 종료일을 자동으로 최대 범위(또는 오늘)로 설정
   function setDateField(field, dateObj) {
     const valueStr = formatDateValue(dateObj);
     const displayStr = formatDateDisplay(dateObj);
@@ -468,8 +493,6 @@ document.addEventListener("DOMContentLoaded", () => {
       if (dateStart) dateStart.value = valueStr;
       if (dateStartDisplay) dateStartDisplay.textContent = displayStr;
 
-      // 🔧 시작일을 고르면 종료일을 "시작일 + 30일"(최대 한 달 범위)으로 자동 설정.
-      //    단, 그 값이 아직 발생하지 않은 미래 날짜라면 오늘 날짜까지만 채운다.
       const today = new Date();
       const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
       const maxEnd = addDays(dateObj, MAX_DIRECT_RANGE_DAYS - 1);
@@ -487,6 +510,7 @@ document.addEventListener("DOMContentLoaded", () => {
       a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   }
 
+  // 달력 날짜 셀 렌더링 - 미래 날짜 및 최대 범위 밖 날짜는 선택 비활성화
   function renderCalendarDays() {
     if (!calDays || !calMonthYear) return;
 
@@ -504,7 +528,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const selectedStr = calActiveField === 'start' ? dateStart?.value : dateEnd?.value;
     const selectedDate = parseDateValue(selectedStr);
 
-    // 🔧 종료일을 고를 땐 시작일 ~ 시작일+30일(최대 한 달) 범위 밖은 선택 못 하게 함
     const startDateForRange = parseDateValue(dateStart?.value);
     const maxEndDate = startDateForRange ? addDays(startDateForRange, MAX_DIRECT_RANGE_DAYS - 1) : null;
 
@@ -530,7 +553,6 @@ document.addEventListener("DOMContentLoaded", () => {
       if (isSameDate(cell.dateObj, today)) el.classList.add("today");
       if (selectedDate && isSameDate(cell.dateObj, selectedDate)) el.classList.add("selected");
 
-      // 🔧 아직 발생하지 않은 미래 날짜는 시작일/종료일 둘 다 선택 자체를 막음
       const isFuture = cell.dateObj > todayDateOnly;
       const isOutOfRange = calActiveField === 'end' && startDateForRange &&
         (cell.dateObj < startDateForRange || cell.dateObj > maxEndDate);
@@ -570,7 +592,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     renderCalendarDays();
-    sendHeightToParent(); // 🔧 팝업이 잘리지 않도록 높이 재계산
+    sendHeightToParent();
   }
 
   function closeCalendar() {
@@ -578,7 +600,7 @@ document.addEventListener("DOMContentLoaded", () => {
     calendarPopup?.classList.remove("active");
     dateStartDisplay?.classList.remove("active");
     dateEndDisplay?.classList.remove("active");
-    sendHeightToParent(); // 🔧 팝업이 닫힌 만큼 높이 재계산
+    sendHeightToParent();
   }
 
   dateStartDisplay?.addEventListener("click", (e) => {
@@ -604,12 +626,6 @@ document.addEventListener("DOMContentLoaded", () => {
   calendarPopup?.addEventListener("click", (e) => e.stopPropagation());
   document.addEventListener("click", () => closeCalendar());
 
-  // 🔧 "월 단위 지정" 미래월 선택 차단 및 기본값 설정에 공통으로 쓰는 현재 월 문자열(YYYY-MM)
-  function getCurrentMonthValue() {
-    const now = new Date();
-    return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
-  }
-
   if (dateSelect) {
     update24hRange();
 
@@ -617,26 +633,15 @@ document.addEventListener("DOMContentLoaded", () => {
       const value = e.target.value;
 
       if (dateRangeText) dateRangeText.style.display = "none";
-      if (dateMonthInput) dateMonthInput.style.display = "none";
       if (dateInputGroup) dateInputGroup.style.display = "none";
       closeCalendar();
 
       if (value === "24h") {
         update24hRange();
         if (dateRangeText) dateRangeText.style.display = "inline-block";
-      } else if (value === "month") {
-        if (dateMonthInput) {
-          const currentMonthStr = getCurrentMonthValue();
-          dateMonthInput.max = currentMonthStr; // 🔧 브라우저 네이티브 월 선택기에서부터 미래월 선택 차단
-          // 🔧 "직접 지정"과 동일하게, 월 단위 지정을 다시 선택할 때마다 이전에 골랐던 월은 잊고 이번 달로 초기화
-          dateMonthInput.value = currentMonthStr;
-          dateMonthInput.style.display = "inline-block";
-          dateMonthInput.focus();
-        }
       } else if (value === "direct") {
         if (dateInputGroup) {
           dateInputGroup.style.display = "flex";
-          // 🔧 직접 지정을 다시 선택할 때마다 이전에 골랐던 기간은 잊고 오늘 날짜로 초기화
           const today = new Date();
           setDateField('start', today);
           setDateField('end', today);
@@ -646,8 +651,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ── 2. 포함 조건 제어 ──
-  // 🔧 텍스트로 직접 검색어를 입력받는 카테고리 (제목/키워드/매거진/작가/제목+키워드)
-  //    - 'keyword'(G.키워드, 구글시트 연동)는 기존 sheet-select 방식 그대로 유지, 여기 포함 안 함
+  // 텍스트 직접입력 카테고리 (G.키워드는 sheet-select 방식이라 별도)
   const INCLUDE_TEXT_CATEGORIES = {
     title: "제목 검색어 입력..",
     keyword_text: "키워드 입력..",
@@ -663,7 +667,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (sheetSelect) { sheetSelect.style.display = "none"; sheetSelect.value = ""; }
       if (keywordSelect) { keywordSelect.style.display = "none"; keywordSelect.innerHTML = '<option value="">키워드 선택</option>'; }
       if (includeInput) { includeInput.style.display = "none"; includeInput.value = ""; }
-      if (includeTagContainer) includeTagContainer.innerHTML = ""; // 🔧 카테고리 재선택 시 기존 추가된 태그 자동 삭제
+      if (includeTagContainer) includeTagContainer.innerHTML = "";
+      if (includeMatchMode) {
+        includeMatchMode.value = "OR";
+        includeMatchMode.style.display = (val === "keyword") ? "none" : "inline-block";
+      }
       sendHeightToParent();
 
       if (val === "keyword") {
@@ -719,7 +727,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const selectedText = e.target.options[e.target.selectedIndex]?.text;
 
       if (val !== "" && selectedText) {
-        addTagToContainer(excludeTagContainer, selectedText, true, val); // 🔧 코드값(val)도 함께 저장
+        addTagToContainer(excludeTagContainer, selectedText, true, val);
         e.target.value = "";
       }
     });
@@ -728,7 +736,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // ── 4. 버튼 이벤트 ──
   btnIncludeTagsReset?.addEventListener("click", () => {
     if (includeTagContainer) includeTagContainer.innerHTML = "";
-    sendHeightToParent(); // 🔧 태그가 사라진 만큼 높이 재계산
+    sendHeightToParent();
   });
 
   btnIncludeAdd?.addEventListener("click", () => {
@@ -755,8 +763,6 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    // 🔧 태그에 카테고리(G.키워드/제목/키워드/매거진/작가/제목+키워드)를 함께 저장해서
-    //    검색 시 해당 카테고리에 맞는 필드만 매칭하도록 함
     addTagToContainer(includeTagContainer, tagText, false, val || "keyword");
   });
 
@@ -764,7 +770,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const tags = includeTagContainer ? Array.from(includeTagContainer.querySelectorAll(".tag span")) : [];
 
     if (tags.length === 0) {
-      showAlert("안내", "저장할 키워드가 없습니다.<br>먼저 키워드를 추가해 주세요.");
+      showAlert("안내", [T("저장할 키워드가 없습니다."), BR(), T("먼저 키워드를 추가해 주세요.")]);
       return;
     }
 
@@ -776,9 +782,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const item = document.createElement("div");
       item.className = "modal-mapping-item";
 
-      // 🔧 innerHTML 템플릿 문자열 대신 요소를 직접 만들어서 kwText를 삽입 - 이 값이
-      //    구글시트(다른 협업자도 편집 가능)에서 온 키워드일 수 있어, title/data 속성이나
-      //    태그 내용으로 그대로 문자열 결합하면 악성 값이 섞였을 때 XSS로 이어질 수 있었음
+      // 구글시트에서 온 값이 XSS로 이어지지 않도록 요소를 직접 생성
       const keywordSpan = document.createElement("span");
       keywordSpan.className = "modal-mapping-keyword";
       keywordSpan.title = kwText;
@@ -813,6 +817,7 @@ document.addEventListener("DOMContentLoaded", () => {
     sheetMappingModal?.classList.remove("active");
   });
 
+  // 시트 선택 저장 - 기존 키워드 조회 후 중복 걸러내고 신규만 전송
   btnModalSaveStart?.addEventListener("click", async () => {
     const selectElements = modalMappingList ? modalMappingList.querySelectorAll(".modal-mapping-select") : [];
     sheetMappingModal?.classList.remove("active");
@@ -821,7 +826,6 @@ document.addEventListener("DOMContentLoaded", () => {
     btnIncludeSave.disabled = true;
     btnIncludeSave.textContent = "저장 중...";
 
-    // 🔧 실제로 이번에 선택된 시트만 조회(불필요한 시트까지 매번 3개 다 조회하던 걸 줄임)
     const usedSheetKeys = new Set(
       [...selectElements].map(sel => sel.value).filter(key => key !== "none" && SHEET_INFO[key])
     );
@@ -830,7 +834,6 @@ document.addEventListener("DOMContentLoaded", () => {
     await runWithConcurrencyLimit([...usedSheetKeys], async (key) => {
       existingMap[key] = await getExistingKeywords(SHEET_INFO[key].gid, SHEET_INFO[key].name);
     });
-    // 선택되지 않은 시트는 조회하지 않았으므로 빈 배열로 채워둠(아래 로직에서 안전하게 사용하기 위함)
     for (const key in SHEET_INFO) {
       if (!existingMap[key]) existingMap[key] = [];
     }
@@ -843,7 +846,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     let skippedCount = 0;
 
-    // 🔧 1단계: 어떤 키워드를 저장할지 먼저 다 걸러낸다 (기존 중복 + 이번 배치 내 중복도 여기서 즉시 반영)
     const itemsToSave = [];
     for (const sel of selectElements) {
       const keyword = sel.getAttribute("data-keyword");
@@ -860,12 +862,11 @@ document.addEventListener("DOMContentLoaded", () => {
       if (existingMap[targetSheetKey].includes(keyword)) {
         resultMap[targetSheetKey].duplicate.push(keyword);
       } else {
-        existingMap[targetSheetKey].push(keyword); // 같은 배치 안에서 동일 키워드가 또 나와도 중복으로 걸리도록 미리 반영
+        existingMap[targetSheetKey].push(keyword);
         itemsToSave.push({ keyword, targetSheetKey, info });
       }
     }
 
-    // 🔧 2단계: 실제 전송도 완전 병렬 대신 동시 2개로 제한해서 처리 (속도와 안정성의 균형)
     await runWithConcurrencyLimit(itemsToSave, async ({ keyword, targetSheetKey, info }) => {
       const success = await sendToGoogleSheet(keyword, info.gid, info.name);
       if (success) {
@@ -876,7 +877,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btnIncludeSave.disabled = false;
     btnIncludeSave.textContent = "저장";
 
-    let msgHtml = "";
+    const parts = [];
     let totalSaved = 0;
     let totalDup = 0;
 
@@ -887,35 +888,32 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (saved.length > 0 || dup.length > 0) {
         const sheetUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit#gid=${SHEET_INFO[key].gid}`;
-        msgHtml += `<b>[${sheetName}] 시트 결과</b> <a href="${sheetUrl}" target="_blank" rel="noopener noreferrer" style="font-size:11px; color:var(--accent); text-decoration:underline;">시트 열기 ↗</a><br>`;
+        parts.push(B(`[${sheetName}] 시트 결과 `), A(sheetUrl, "시트 열기 ↗"), BR());
         if (saved.length > 0) {
-          // 🔧 이 저장 요청은 구글 앱스 스크립트에 no-cors로 보내져서 서버 쪽 성공/실패를
-          //    응답으로 확인할 방법이 없다(브라우저가 응답 내용을 아예 읽지 못하게 막는 모드라,
-          //    네트워크 요청 자체가 나갔다는 것만 알 수 있음). 그래서 "저장됨"이라고 단정하는
-          //    대신 "요청을 보냈다"는 정직한 표현을 쓰고, 실제 반영 여부는 시트에서 확인하도록 안내한다.
-          msgHtml += `📤 저장 요청 전송: ${saved.join(", ")}<br>`;
+          // no-cors 요청이라 서버 성공/실패 확인 불가 - "저장됨"이 아닌 "요청 전송" 표현 사용
+          parts.push(T(`📤 저장 요청 전송: ${saved.join(", ")}`), BR());
           totalSaved += saved.length;
         }
         if (dup.length > 0) {
-          msgHtml += `⚠️ 중복 제외: ${dup.join(", ")}<br>`;
+          parts.push(T(`⚠️ 중복 제외: ${dup.join(", ")}`), BR());
           totalDup += dup.length;
         }
-        msgHtml += `<br>`;
+        parts.push(BR());
       }
     }
 
     if (skippedCount > 0) {
-      msgHtml += `ℹ️ <b>저장 안 함 (해당 없음):</b> ${skippedCount}건<br>`;
+      parts.push(T(`ℹ️ 저장 안 함 (해당 없음): ${skippedCount}건`), BR());
     }
 
     if (totalSaved > 0) {
-      msgHtml += `<span style="font-size:11px; color:var(--text-sub);">※ 전송 완료 여부(성공/실패)는 이 화면에서 확인이 불가능해요. 위 "시트 열기" 링크에서 실제 반영됐는지 확인해 주세요.</span><br>`;
+      parts.push(T("※ 전송 완료 여부(성공/실패)는 이 화면에서 확인이 불가능해요. 위 \"시트 열기\" 링크에서 실제 반영됐는지 확인해 주세요."), BR());
     }
 
     if (totalSaved === 0 && totalDup === 0 && skippedCount === 0) {
       showAlert("결과", "저장된 항목이 없습니다.");
     } else {
-      showAlert("저장 처리 결과", msgHtml);
+      showAlert("저장 처리 결과", parts);
     }
 
     if (sheetSelect && sheetSelect.value) {
@@ -924,9 +922,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // 🔥 동적 높이 갱신
-  // 🔧 document.documentElement.scrollHeight는 position:fixed 모달(높이 100%)이 떠 있을 때
-  //    뷰포트 기준 높이에 고정되어 버리므로, 실제 콘텐츠 영역(header + main)만 직접 측정한다.
+  // 동적 높이 갱신 - 실제 콘텐츠 영역(header+main)만 측정해 부모 iframe 크기 조절
   const headerEl = document.querySelector(".header");
   const mainEl = document.querySelector(".main");
 
@@ -936,8 +932,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const mainHeight = mainEl ? mainEl.scrollHeight : 0;
       let actualHeight = headerHeight + mainHeight;
 
-      // 🔧 커스텀 달력 팝업이 열려 있으면(overflow:visible이라 scrollHeight에 잡히지 않음)
-      //    팝업 하단이 잘리지 않도록 필요한 높이를 추가로 반영
+      // 달력 팝업(overflow:visible)이 열려있으면 잘리지 않도록 높이 보정
       if (calendarPopup && calendarPopup.classList.contains("active")) {
         const popupBottom = calendarPopup.offsetTop + calendarPopup.offsetHeight;
         if (popupBottom + 12 > actualHeight) {
