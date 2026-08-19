@@ -2,7 +2,6 @@
 // 기능: 검색 조건 입력 팝업 UI - 조건 수집, 검색/다운로드 요청, 결과 표시, 구글시트 연동
 document.addEventListener("DOMContentLoaded", () => {
   // XSS 방지용 DOM 빌더 헬퍼 - 동적 값이 항상 텍스트로만 삽입되도록 함
-  // 피드백: showAlert()가 innerHTML을 써서 구글시트 키워드 등 동적 값이 스크립트로 해석될 수 있었음
   const T = (text) => document.createTextNode(String(text ?? ""));
   const B = (text) => { const e = document.createElement("b"); e.textContent = text; return e; };
   const BR = () => document.createElement("br");
@@ -182,7 +181,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // 다운로드 버튼 - 검색과 동일한 로딩 박스를 재사용해 진행 상황 표시
-  // 피드백: 다운로드 중 화면에 아무 표시가 없어 "멈춘 건가" 오해하기 쉬웠음 → 진행 안내 추가
   btnDownload?.addEventListener("click", () => {
     if (loadingBoxText) loadingBoxText.textContent = "📤 다운로드를 준비하는 중입니다... 잠시만 기다려주세요.";
     if (searchLoadingBox) searchLoadingBox.style.display = "block";
@@ -388,24 +386,40 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  // 구글 시트로 키워드 전송 - 실제 응답을 읽어 성공/실패를 { ok, reason } 형태로 반환.
+  // 크로스오리진 요청이라 credentials: "include"로 구글 세션 쿠키를 함께 보내야
+  // Code.gs의 assertAllowedUser_()가 요청자를 식별할 수 있다.
   async function sendToGoogleSheet(value, targetGid, sheetName) {
-    if (!GOOGLE_SCRIPT_URL) return false;
+    if (!GOOGLE_SCRIPT_URL) return { ok: false, reason: "저장 주소가 설정되어 있지 않습니다." };
 
     try {
-      await fetch(GOOGLE_SCRIPT_URL, {
+      const res = await fetch(GOOGLE_SCRIPT_URL, {
         method: "POST",
-        mode: "no-cors",
+        credentials: "include", // ✅ 구글 세션 쿠키 전달 → Code.gs가 요청자를 식별할 수 있게
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({
           value: value,
           targetGid: targetGid,
           sheetName: sheetName
         }),
+        redirect: "follow"
       });
-      return true;
+
+      if (!res.ok) {
+        return { ok: false, reason: `HTTP ${res.status}` };
+      }
+
+      const data = await res.json();
+      if (data && data.result === "forbidden") {
+        return { ok: false, reason: "권한 없음(사내 계정으로 로그인되어 있는지 확인해 주세요)" };
+      }
+      if (!data || data.result !== "success") {
+        return { ok: false, reason: (data && data.error) || "알 수 없는 오류" };
+      }
+      return { ok: true };
     } catch (error) {
       console.error("❌ 전송 실패:", error);
-      return false;
+      return { ok: false, reason: error.message || "네트워크 오류" };
     }
   }
 
@@ -839,9 +853,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const resultMap = {
-      religion: { saved: [], duplicate: [] },
-      promo: { saved: [], duplicate: [] },
-      no_expose: { saved: [], duplicate: [] }
+      religion: { saved: [], duplicate: [], failed: [] },
+      promo: { saved: [], duplicate: [], failed: [] },
+      no_expose: { saved: [], duplicate: [], failed: [] }
     };
 
     let skippedCount = 0;
@@ -868,9 +882,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     await runWithConcurrencyLimit(itemsToSave, async ({ keyword, targetSheetKey, info }) => {
-      const success = await sendToGoogleSheet(keyword, info.gid, info.name);
-      if (success) {
+      const result = await sendToGoogleSheet(keyword, info.gid, info.name);
+      if (result.ok) {
         resultMap[targetSheetKey].saved.push(keyword);
+      } else {
+        resultMap[targetSheetKey].failed.push(`${keyword}(${result.reason})`);
       }
     });
 
@@ -880,23 +896,29 @@ document.addEventListener("DOMContentLoaded", () => {
     const parts = [];
     let totalSaved = 0;
     let totalDup = 0;
+    let totalFailed = 0;
 
     for (const key in resultMap) {
       const saved = resultMap[key].saved;
       const dup = resultMap[key].duplicate;
+      const failed = resultMap[key].failed;
       const sheetName = SHEET_INFO[key].name;
 
-      if (saved.length > 0 || dup.length > 0) {
+      if (saved.length > 0 || dup.length > 0 || failed.length > 0) {
         const sheetUrl = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/edit#gid=${SHEET_INFO[key].gid}`;
         parts.push(B(`[${sheetName}] 시트 결과 `), A(sheetUrl, "시트 열기 ↗"), BR());
         if (saved.length > 0) {
-          // no-cors 요청이라 서버 성공/실패 확인 불가 - "저장됨"이 아닌 "요청 전송" 표현 사용
-          parts.push(T(`📤 저장 요청 전송: ${saved.join(", ")}`), BR());
+          // 이제 실제 서버 응답(result:"success")을 확인한 뒤에만 "완료"로 표시
+          parts.push(T(`✅ 저장 완료: ${saved.join(", ")}`), BR());
           totalSaved += saved.length;
         }
         if (dup.length > 0) {
           parts.push(T(`⚠️ 중복 제외: ${dup.join(", ")}`), BR());
           totalDup += dup.length;
+        }
+        if (failed.length > 0) {
+          parts.push(T(`❌ 저장 실패: ${failed.join(", ")}`), BR());
+          totalFailed += failed.length;
         }
         parts.push(BR());
       }
@@ -906,11 +928,7 @@ document.addEventListener("DOMContentLoaded", () => {
       parts.push(T(`ℹ️ 저장 안 함 (해당 없음): ${skippedCount}건`), BR());
     }
 
-    if (totalSaved > 0) {
-      parts.push(T("※ 전송 완료 여부(성공/실패)는 이 화면에서 확인이 불가능해요. 위 \"시트 열기\" 링크에서 실제 반영됐는지 확인해 주세요."), BR());
-    }
-
-    if (totalSaved === 0 && totalDup === 0 && skippedCount === 0) {
+    if (totalSaved === 0 && totalDup === 0 && totalFailed === 0 && skippedCount === 0) {
       showAlert("결과", "저장된 항목이 없습니다.");
     } else {
       showAlert("저장 처리 결과", parts);

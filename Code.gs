@@ -42,7 +42,7 @@ function doGet(e) {
       keywords: keywords
     };
 
-    // 피드백: JSONP(callback) 분기가 죽은 코드로 남아 콜백 인젝션 위험이 있었음 → 제거, 순수 JSON만 응답
+    // 순수 JSON으로만 응답
     return ContentService.createTextOutput(JSON.stringify(resultData))
       .setMimeType(ContentService.MimeType.JSON);
 
@@ -53,9 +53,7 @@ function doGet(e) {
   }
 }
 
-// 피드백: 배포 설정(액세스 권한)이 knworks.co.kr 도메인으로 제한돼 있어도, 그건 배포 화면의
-// 설정값일 뿐이라 나중에 누군가 실수로 "모든 사용자"로 바꾸면 그 순간 방어막이 사라진다.
-// 배포 설정과 무관하게 코드 자체가 요청자 이메일을 확인해서 이중으로 막아준다.
+// 배포 설정(액세스 권한)과 무관하게 코드 자체가 요청자 이메일 도메인을 확인해서 이중으로 막는다.
 const ALLOWED_DOMAIN = "knworks.co.kr";
 
 function assertAllowedUser_() {
@@ -127,7 +125,7 @@ function doPost(e) {
     sheet.getRange(targetRow, 2).setValue(itemNumber);
     sheet.getRange(targetRow, 3).setValue(data.value);
 
-    // 피드백: 누가 언제 무엇을 등록했는지 추적할 방법이 없었음 → 요청자 기록 추가
+    // 요청자 기록
     try {
       logChange_(spreadsheet, sheet.getName(), data.value, targetRow, actorEmail);
     } catch (logErr) {

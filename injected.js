@@ -1,20 +1,9 @@
 // injected.js
-// 기능: 메인 world(페이지 컨텍스트)에서 실행 - 발행글 목록 수집 + 원본 함수 호출 위임
-
-// 🔐 content-main.js가 이 파일을 <script> 태그로 동적 주입할 때, data-atf-nonce 속성에 격리
-// world 전역(window.__ATF_NONCE__)과 동일한 값을 실어 보낸다. document.currentScript는 이
-// <script src>가 동기 실행되는 동안에만 유효하므로 최상단에서 바로 읽어 확보해둔다.
-// 피드백: 등록 액션(블랙/레드글 등)을 위임받는 메시지가 origin/source 검증만으로는, 같은
-// 페이지의 다른 스크립트가 조건을 그대로 만족시켜 위조 트리거를 보낼 수 있었음 → console-log.js의
-// nonce 검증과 동일한 패턴을 등록 액션 메시지에도 적용.
-const ATF_ACTION_NONCE = (document.currentScript && document.currentScript.dataset)
-  ? document.currentScript.dataset.atfNonce || null
-  : null;
+// 기능: 메인 world(페이지 컨텍스트)에서 실행 - 발행글 목록 페이지 수집
 
 // 격리 world(content-main.js)로 alert/confirm/prompt 표시를 요청하고 사용자 응답을 기다린다.
 // 메인 world는 격리 world의 atfAlert() 등 함수를 직접 부를 수 없어(서로 다른 JS 실행공간),
-// postMessage 왕복으로 대신 요청한다. 값을 되돌려받아야 하는 confirm/prompt는 결과를 기다리고,
-// alert처럼 결과가 필요 없는 경우는 호출부에서 await 없이 그냥 요청만 보내도 된다.
+// postMessage 왕복으로 대신 요청한다.
 function requestAtfModal(kind, message, defaultValue) {
   return new Promise((resolve) => {
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -164,28 +153,6 @@ function parseSveltePropsFromHtml(html) {
   }
 }
 
-// 등록 후 뱃지 갱신용 단건 게시글 재조회 (profileId+articleNo로 그 글 하나만 정확히 조회)
-window.addEventListener("message", async (event) => {
-  if (!event.data || event.data.type !== "REQUEST_REFRESH_ARTICLE") return;
-  if (event.source !== window || event.origin !== location.origin) return;
-
-  const { requestId, profileId, articleNo } = event.data;
-  try {
-    const url = new URL("/article/daily", location.origin);
-    url.searchParams.set("profileId", profileId);
-    url.searchParams.set("articleNo", articleNo);
-    const res = await fetch(url.toString(), { credentials: "same-origin" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const html = await res.text();
-    const parsed = parseSveltePropsFromHtml(html);
-    const article = (parsed && Array.isArray(parsed.dailyList) && parsed.dailyList[0]) || null;
-    window.postMessage({ type: "REFRESH_ARTICLE_RESULT", requestId, article }, "*");
-  } catch (e) {
-    console.error("❌ [injected.js] 게시글 갱신 조회 실패:", e);
-    window.postMessage({ type: "REFRESH_ARTICLE_RESULT", requestId, article: null }, "*");
-  }
-});
-
 // 검색 실행 - 1페이지로 전체 페이지 수 확인 후 배치 단위로 나머지 수집
 window.addEventListener("message", async (event) => {
   if (!event.data || event.data.type !== "REQ_SVELTE_PAGES") return;
@@ -259,7 +226,6 @@ window.addEventListener("message", async (event) => {
       const totalPageCount = firstParsed.totalPageCount;
       logProgress(`🎯 [injected.js] 전체 페이지 수 확인됨: ${totalPageCount}페이지`);
 
-      // 피드백: 대량 요청량을 운영자가 모른 채 시작하지 않도록 임계치 초과 시 확인창 표시
       if (totalPageCount > CONFIRM_PAGE_THRESHOLD) {
         const ok = await requestAtfModal(
           'confirm',
@@ -372,108 +338,4 @@ window.addEventListener("message", async (event) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════
-// § 2. 원본 함수 호출 위임 (블랙/레드글 등록, 화이트리스트 모달, PC홈/피처링 추천)
-// ══════════════════════════════════════════════════════════════════
 console.log("🟢 [ATF2029] injected.js 메인 스크립트 주입 완료");
-
-// 블랙/레드글 등록 위임 - adminB.article.addBlackRedArticle을 인자 없이 호출해
-// 원본이 체크박스를 스스로 스캔하며 confirm을 띄우게 함(직접 인자를 넘기면 확인 없이 즉시 등록됨)
-window.addEventListener("message", (event) => {
-  if (!event.data || event.data.type !== "TRIGGER_BLACK_RED_REGISTER") return;
-  if (event.source !== window || event.origin !== location.origin) return;
-  if (event.data.nonce !== ATF_ACTION_NONCE) return; // 위조 트리거 차단
-
-  try {
-    if (window.adminB && window.adminB.article && typeof window.adminB.article.addBlackRedArticle === 'function') {
-      window.adminB.article.addBlackRedArticle(event.data.regType);
-    } else {
-      console.error("❌ [injected.js] adminB.article.addBlackRedArticle 함수를 찾을 수 없습니다.");
-      requestAtfModal('alert', "등록 기능을 찾을 수 없습니다. 페이지를 새로고침한 후 다시 시도해 주세요.");
-    }
-  } catch (err) {
-    console.error("❌ [injected.js] 블랙/레드글 등록 호출 중 오류:", err);
-  }
-});
-
-// 화이트리스트 등록/수정 모달 위임 - 원본이 서버 렌더링 HTML 폼을 그대로 불러와
-// #whiteModal에 삽입하는 방식(저장은 원본이 이미 걸어둔 리스너가 처리)
-window.addEventListener("message", (event) => {
-  if (!event.data || event.data.type !== "TRIGGER_WHITE_MODAL") return;
-  if (event.source !== window || event.origin !== location.origin) return;
-  if (event.data.nonce !== ATF_ACTION_NONCE) return; // 위조 트리거 차단
-
-  const userId = event.data.userId;
-  if (!userId) return;
-
-  try {
-    const $ = window.jQuery;
-    if (!$ || !$.get) {
-      console.error("❌ [injected.js] jQuery를 찾을 수 없습니다.");
-      requestAtfModal('alert', "화이트리스트 모달을 열 수 없습니다. 페이지를 새로고침한 후 다시 시도해 주세요.");
-      return;
-    }
-
-    const checkUrl = `/user/white/check?userId=${encodeURIComponent(userId)}`;
-    $("#keywordModal").modal("hide");
-    $.get(checkUrl, function (html) {
-      $("#whiteModal").html(html);
-      $("#whiteModal").modal("show");
-
-      if (window.adminB && window.adminB.keywordMap && typeof window.adminB.keywordMap.init === "function") {
-        window.adminB.keywordMap.init();
-      }
-      $(".btn-category").trigger("click");
-      $(".white-level .btn").on("click", function () {
-        $(".white-level .btn.active").removeClass("active");
-        $(this).addClass("active");
-      });
-    }).fail(function (xhr) {
-      console.error("❌ [injected.js] 화이트리스트 모달 로드 실패:", xhr && xhr.status);
-      requestAtfModal('alert', "화이트리스트 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
-    });
-  } catch (err) {
-    console.error("❌ [injected.js] 화이트리스트 모달 호출 중 오류:", err);
-  }
-});
-
-// PC홈/피처링 추천(단건) 위임 - adminB.article.addFeatureData가
-// 블랙/레드/미발행 여부 서버 확인 + confirm + 등록까지 전부 처리
-window.addEventListener("message", (event) => {
-  if (!event.data || event.data.type !== "TRIGGER_ADD_FEATURE_DATA") return;
-  if (event.source !== window || event.origin !== location.origin) return;
-  if (event.data.nonce !== ATF_ACTION_NONCE) return; // 위조 트리거 차단
-
-  try {
-    if (window.adminB && window.adminB.article && typeof window.adminB.article.addFeatureData === 'function') {
-      window.adminB.article.addFeatureData(event.data.regType, event.data.articleNo, event.data.userId);
-    } else {
-      console.error("❌ [injected.js] adminB.article.addFeatureData 함수를 찾을 수 없습니다.");
-      requestAtfModal('alert', "추천 기능을 찾을 수 없습니다. 페이지를 새로고침한 후 다시 시도해 주세요.");
-    }
-  } catch (err) {
-    console.error("❌ [injected.js] PC 홈/피처링 추천 호출 중 오류:", err);
-  }
-});
-
-// PC홈/피처링 추천(일괄) 위임 - contentIdList 여러 건을 한 번에 넘겨 confirm 1번으로 처리
-window.addEventListener("message", (event) => {
-  if (!event.data || event.data.type !== "TRIGGER_ADD_FEATURE_DATA_BATCH") return;
-  if (event.source !== window || event.origin !== location.origin) return;
-  if (event.data.nonce !== ATF_ACTION_NONCE) return; // 위조 트리거 차단
-
-  try {
-    if (window.adminB && window.adminB.article && typeof window.adminB.article.addFeatureDataCallback === 'function') {
-      window.adminB.article.addFeatureDataCallback(
-        '/article/daily/addFeatureData.json',
-        event.data.regType,
-        event.data.contentIdList
-      );
-    } else {
-      console.error("❌ [injected.js] adminB.article.addFeatureDataCallback 함수를 찾을 수 없습니다.");
-      requestAtfModal('alert', "추천 기능을 찾을 수 없습니다. 페이지를 새로고침한 후 다시 시도해 주세요.");
-    }
-  } catch (err) {
-    console.error("❌ [injected.js] PC 홈/피처링 추천 일괄 호출 중 오류:", err);
-  }
-});

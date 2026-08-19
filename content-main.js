@@ -1,22 +1,138 @@
 // content-main.js
-// 기능: 검색 팝업/모달 생성, 검색 결과 필터링·렌더링, 검색 실행·다운로드·xlsx 생성,
-// 팝업 드래그, "멤버십 전문 조회" 클릭 처리
-// (블랙/레드글 등 액션 트리거와 뱃지 렌더링은 content-actions.js로 분리됨)
+// 기능: 격리 world 전역 상태·상수, 검색 팝업/모달 생성, 검색 결과 필터링·렌더링,
+// 검색 실행·다운로드, 팝업 드래그, 커스텀 alert/confirm/prompt 모달, 확장 초기화 진입점
+// (블랙/레드글 등 액션 트리거는 삭제됨, 뱃지 렌더링은 content-badges.js로 분리됨,
+// xlsx 생성은 xlsx-writer.js로 분리됨)
+//
+// §0(전역 상태)이 맨 위, §7(초기화 진입점)이 맨 아래에 위치 - 파일 내부는 위→아래로 순서가
+// 보장되므로, 여러 파일로 나뉘어 있을 때 생기던 "로드 순서" 제약 없이 안전하게 초기화된다.
 
-const ATF_CONFIG = {
-  // 피드백: 멤버십 전문 조회 링크가 개발서버 도메인+특정 작가 핸들로 하드코딩되어 있던 문제
-  // → 실사용 확인 결과 도메인 자체는 정상 사용처였고, 문제는 핸들 하드코딩이었음(클릭 시점에
-  // background.js로 실제 필명을 조회해 채우도록 §6에서 처리)
-  MEMBERSHIP_VIEW_ENABLED: true,
-  MEMBERSHIP_VIEW_ORIGIN: "https://cbt-brunch.dev.onkakao.net",
-};
+// ══════════════════════════════════════════════════════════════════
+// § 0. 격리 world 전역 상태·상수 (다른 어떤 함수보다 먼저 선언되어야 함)
+// ══════════════════════════════════════════════════════════════════
+
+console.log("🟢 [ATF2029] content.js 로드 완료 (Frame ID:", window.name || "current", ")");
+
+let lastUrl = location.href;
+
+// 커스텀 검색결과 테이블 식별용 (원본 id/class와 충돌 방지)
+const CUSTOM_RESULT_TABLE_ID = "atf-custom-result-container";
+const CUSTOM_RESULT_ATTR = "data-atf-role";
+
+// 다운로드 기능에서 사용하는 최근 검색결과 캐시
+let lastMatchedItems = [];
+let lastMatchedRows = [];
+
+const CUSTOM_PAGINATION_ID = "atf-custom-pagination-container";
+let isSearchingProcess = false;
+
+// postMessage 발신처 검증용 확장 origin
+// 모든 postMessage 리스너가 이 값과 대조해 위조 메시지를 차단
+const ATF_EXTENSION_ORIGIN = chrome.runtime.getURL('').slice(0, -1);
+
+// ══════════════════════════════════════════════════════════════════
+// § 0-1. 커스텀 alert/confirm/prompt 모달 (페이지에 직접 그림 - popup.html 팝업과는 별개)
+// ══════════════════════════════════════════════════════════════════
+// 브런치 페이지 자체에 확장 스타일의 모달을 직접 그려서 표시. 동적 값은 항상 textContent로만
+// 넣어서 XSS 여지를 없앤다.
+function atfShowModal_({ title, message, kind, defaultValue }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
+      background: 'rgba(0,0,0,0.4)', zIndex: '2147483647',
+      display: 'flex', alignItems: 'center', justifyContent: 'center'
+    });
+
+    const box = document.createElement('div');
+    Object.assign(box.style, {
+      background: '#fff', borderRadius: '10px', padding: '20px',
+      width: '320px', maxWidth: '90vw', boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif',
+      fontSize: '13px', color: '#1C2A3A', boxSizing: 'border-box'
+    });
+
+    const titleEl = document.createElement('div');
+    titleEl.textContent = title;
+    Object.assign(titleEl.style, { fontWeight: '700', fontSize: '14px', marginBottom: '10px' });
+
+    const msgEl = document.createElement('div');
+    msgEl.textContent = message; // XSS 방지 - 항상 textContent로만 삽입
+    Object.assign(msgEl.style, { marginBottom: '14px', lineHeight: '1.5', whiteSpace: 'pre-wrap' });
+
+    box.append(titleEl, msgEl);
+
+    let inputEl = null;
+    if (kind === 'prompt') {
+      inputEl = document.createElement('input');
+      inputEl.type = 'text';
+      inputEl.value = defaultValue || '';
+      Object.assign(inputEl.style, {
+        width: '100%', padding: '8px', marginBottom: '14px',
+        border: '1px solid #DCE2EE', borderRadius: '6px', boxSizing: 'border-box', fontSize: '12px'
+      });
+      box.appendChild(inputEl);
+    }
+
+    const btnRow = document.createElement('div');
+    Object.assign(btnRow.style, { display: 'flex', justifyContent: 'flex-end', gap: '8px' });
+
+    const makeBtn = (text, primary) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = text;
+      Object.assign(b.style, {
+        padding: '7px 14px', borderRadius: '6px', border: primary ? 'none' : '1px solid #DCE2EE',
+        background: primary ? '#5B8DEF' : '#fff', color: primary ? '#fff' : '#6070A0',
+        fontSize: '12px', fontWeight: '600', cursor: 'pointer'
+      });
+      return b;
+    };
+
+    const cleanup = () => overlay.remove();
+
+    if (kind === 'confirm') {
+      const cancelBtn = makeBtn('취소', false);
+      cancelBtn.addEventListener('click', () => { cleanup(); resolve(false); });
+      const okBtn = makeBtn('확인', true);
+      okBtn.addEventListener('click', () => { cleanup(); resolve(true); });
+      btnRow.append(cancelBtn, okBtn);
+    } else if (kind === 'prompt') {
+      const cancelBtn = makeBtn('취소', false);
+      cancelBtn.addEventListener('click', () => { cleanup(); resolve(null); });
+      const okBtn = makeBtn('확인', true);
+      okBtn.addEventListener('click', () => { cleanup(); resolve(inputEl.value); });
+      btnRow.append(cancelBtn, okBtn);
+      inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') okBtn.click(); });
+    } else {
+      const okBtn = makeBtn('확인', true);
+      okBtn.addEventListener('click', () => { cleanup(); resolve(true); });
+      btnRow.append(okBtn);
+    }
+
+    box.appendChild(btnRow);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    if (inputEl) inputEl.focus();
+  });
+}
+
+function atfAlert(message, title) {
+  return atfShowModal_({ title: title || '안내', message, kind: 'alert' });
+}
+function atfConfirm(message, title) {
+  return atfShowModal_({ title: title || '확인', message, kind: 'confirm' });
+}
+function atfPrompt(message, defaultValue, title) {
+  return atfShowModal_({ title: title || '입력', message, kind: 'prompt', defaultValue });
+}
 
 // ══════════════════════════════════════════════════════════════════
 // § 1. 초기화 (모달/버튼 생성, injected.js 주입, SPA 재초기화 진입점)
 // ══════════════════════════════════════════════════════════════════
 
 // 메인 world 스크립트(injected.js + console-log.js) 동적 주입
-// 피드백: console-log.js의 postMessage 중계에 origin 위조 방지가 필요해서 nonce 방식 도입
+// console-log.js의 postMessage 중계에 nonce로 origin 위조를 방지한다
 function injectMainWorldScript(onReady) {
   if (window !== window.top) return;
 
@@ -43,9 +159,7 @@ function injectMainWorldScript(onReady) {
     scriptMain.id = "atf-injected-script-main";
     scriptMain.src = chrome.runtime.getURL("injected.js");
     scriptMain.async = false;
-    scriptMain.dataset.atfNonce = nonce; // 피드백: injected.js가 위임받는 등록 액션에도 nonce 검증 추가
     scriptMain.addEventListener("load", () => {
-      scriptMain.removeAttribute("data-atf-nonce");
       if (onReady) onReady();
     }, { once: true });
 
@@ -372,14 +486,8 @@ function clearCustomResultUI() {
   if (customPag) customPag.remove();
 }
 
-// 헤더 클릭 정렬용 값 추출 - createRowFromItem의 dataset과 동일 기준
-function getSortValue(item, key) {
-  if (key === 'whiteList') return (item.managedUserType === 'white') ? 1 : 0;
-  return Number(item[key]) || 0;
-}
-
 // 원본 게시글 행(tr)을 복제해 item 데이터로 채운 행을 생성
-// (applyArticleBadgesToRow 등 뱃지/액션 셋업 함수는 content-actions.js에 있음)
+// (applyArticleBadgesToRow 등 뱃지 렌더링 함수는 content-badges.js에 있음)
 function createRowFromItem(item, templateTr) {
   if (!templateTr) return null;
   const clonedTr = templateTr.cloneNode(true);
@@ -410,18 +518,13 @@ function createRowFromItem(item, templateTr) {
 
   const userId = item.userId || (item.article && item.article.userId) || '';
   const articleNo = item.articleNo || (item.article && item.article.no) || '';
-  const profileId = item.profileId || (item.article && item.article.profileId) || '';
   const magazineAddress = item.magazineAddress || (item.article && item.article.magazineAddress) || '';
   const magazineLink = item.magazineLink || `https://brunch.co.kr/magazine/${magazineAddress || 'undefined'}`;
 
-  // 체크박스 user/articleno 속성을 이 게시글 기준으로 갱신
-  // 피드백: 갱신 안 하면 원본 함수가 템플릿 게시글 정보로 등록하는 사고로 이어질 수 있었음
+  // 체크박스 name 속성 부여 (전체선택 체크박스가 이 name="data"로 대상을 찾음)
   const checkbox = clonedTr.querySelector('input[type="checkbox"]');
   if (checkbox && userId && articleNo) {
     checkbox.setAttribute('name', 'data');
-    checkbox.setAttribute('user', userId);
-    checkbox.setAttribute('articleno', articleNo);
-    if (profileId) checkbox.setAttribute('profileid', profileId);
     checkbox.checked = false;
   }
 
@@ -462,44 +565,32 @@ function createRowFromItem(item, templateTr) {
     infoLink.rel = 'noopener noreferrer';
   }
 
-  setupBlackRedLinks(clonedTr, userId, articleNo);
+  // "블랙글 등록"/"레드글 등록" 메뉴는 원본 클론 상태 그대로(href="javascript:") 남아있어
+  // 화면엔 보이지만 클릭해도 동작하지 않는다(등록 기능 자체가 삭제됨).
 
-  // 응원 내역 조회 / 멤버십 전문 조회 링크 (조건부 표시)
+  // 응원 내역 조회/멤버십 전문 조회 - 클릭 가능한 <a>/<button> 대신 순수 뱃지(<span>)로 표시.
+  // clonedTr은 매번 원본(templateTr)에서 새로 복제되므로 이전 렌더링의 잔여물이 남지 않는다.
   const titleBtnGroup = clonedTr.querySelector('td.text-left .btn-group');
   if (titleBtnGroup) {
-    let sibling = titleBtnGroup.nextElementSibling;
-    while (sibling && sibling.tagName === 'A' && sibling.querySelector('span.label')) {
-      const toRemove = sibling;
-      sibling = sibling.nextElementSibling;
-      toRemove.remove();
-    }
-
     const isAllowedDonation = !!(item.isAllowedDonation || (item.article && item.article.isAllowedDonation));
     const isMembership = !!(item.isMembershipContent || item.membershipContent || (item.article && item.article.membershipContent));
 
     let anchorRef = titleBtnGroup;
 
-    if (isAllowedDonation && userId && articleNo) {
-      const donationA = document.createElement('a');
-      donationA.href = `/donationCommentPayment/list?userId=${encodeURIComponent(userId)}&articleNo=${encodeURIComponent(articleNo)}`;
-      donationA.innerHTML = `<span class="label label-info">응원 내역 조회</span>`;
-      anchorRef.insertAdjacentElement('afterend', donationA);
-      anchorRef = donationA;
+    if (isAllowedDonation) {
+      const donationSpan = document.createElement('span');
+      donationSpan.className = 'label label-info';
+      donationSpan.textContent = '응원 내역 조회';
+      anchorRef.insertAdjacentElement('afterend', donationSpan);
+      anchorRef = donationSpan;
     }
 
-    // 멤버십 전문 조회 - 클릭 시점에 실제 필명을 조회해 URL을 완성 (§6에서 클릭 처리)
-    if (ATF_CONFIG.MEMBERSHIP_VIEW_ENABLED && isMembership && userId && articleNo) {
-      const membershipBtn = document.createElement('button');
-      membershipBtn.type = 'button';
-      membershipBtn.dataset.atfMembershipUserId = userId;
-      membershipBtn.dataset.atfMembershipArticleNo = articleNo;
-      const span = document.createElement('span');
-      span.className = 'label label-success';
-      span.style.cursor = 'pointer';
-      span.textContent = '멤버십 전문 조회';
-      membershipBtn.style.cssText = 'background:none;border:none;padding:0;margin-left:4px;';
-      membershipBtn.appendChild(span);
-      anchorRef.insertAdjacentElement('afterend', membershipBtn);
+    if (isMembership) {
+      const membershipSpan = document.createElement('span');
+      membershipSpan.className = 'label label-success';
+      membershipSpan.style.marginLeft = '4px';
+      membershipSpan.textContent = '멤버십 전문 조회';
+      anchorRef.insertAdjacentElement('afterend', membershipSpan);
     }
   }
 
@@ -537,7 +628,8 @@ function createRowFromItem(item, templateTr) {
       authorInfoLink.rel = 'noopener noreferrer';
     }
 
-    setupManagedUserLinks(authorTd, userId, articleNo, profileId);
+    // 작가정보 드롭다운(화이트/그레이/블랙/레드리스트 등록)은 원본 클론 상태 그대로 남아
+    // 클릭해도 동작하지 않는다(등록 기능 자체가 삭제됨).
     applyUserTypeBadgeToRow(clonedTr, item);
   }
 
@@ -582,10 +674,9 @@ function createRowFromItem(item, templateTr) {
 }
 
 // 검색 결과를 15개씩 페이지네이션하며 렌더링, 헤더 클릭 정렬 지원
-function renderCustomPaginatedTable(matchedRows, originalTable, matchedItems) {
+function renderCustomPaginatedTable(matchedRows, originalTable) {
   const ITEMS_PER_PAGE = 15;
   let currentRows = [...matchedRows];
-  let currentItems = [...(matchedItems || [])];
   const totalItems = currentRows.length;
   let totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE) || 1;
   let currentPage = 1;
@@ -697,72 +788,17 @@ function renderCustomPaginatedTable(matchedRows, originalTable, matchedItems) {
     newTable.insertAdjacentElement("afterend", pagContainer);
   };
 
-  // 헤더 클릭 정렬 - DOM dataset 대신 원본 데이터(currentItems) 기준으로 정렬
-  const bindHeaderSortEvents = () => {
-    const ths = newTable.querySelectorAll("thead th");
+  // 컬럼 클릭 정렬 기능은 삭제됨 - 헤더 텍스트/값 표시는 그대로 유지되지만 클릭해도
+  // 정렬되지 않는다.
 
-    const sortKeyMap = {
-      "조회": "clickCount",
-      "댓글": "commentCount",
-      "에디터픽": "editorpickCount",
-      "화이트": "whiteList",
-      "라이킷": "likeCount",
-      "탑리스트": "featureTopCount"
-    };
-
-    ths.forEach(th => {
-      const text = th.textContent.trim();
-      let matchedKey = null;
-
-      for (const [keyName, dataKey] of Object.entries(sortKeyMap)) {
-        if (text.includes(keyName)) {
-          matchedKey = dataKey;
-          break;
-        }
-      }
-
-      if (matchedKey) {
-        th.style.cursor = "pointer";
-        th.title = "클릭하여 정렬";
-
-        th.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-
-          if (currentSortState.column === matchedKey) {
-            currentSortState.asc = !currentSortState.asc;
-          } else {
-            currentSortState.column = matchedKey;
-            currentSortState.asc = false;
-          }
-
-          console.log(`📊 [정렬 실행] 컬럼: ${matchedKey}, 오름차순: ${currentSortState.asc}`);
-
-          const paired = currentRows.map((row, i) => [row, currentItems[i]]);
-          paired.sort((a, b) => {
-            const valA = getSortValue(a[1] || {}, matchedKey);
-            const valB = getSortValue(b[1] || {}, matchedKey);
-            return currentSortState.asc ? valA - valB : valB - valA;
-          });
-          currentRows = paired.map(p => p[0]);
-          currentItems = paired.map(p => p[1]);
-
-          goToPage(1);
-        });
-      }
-    });
-  };
-
-  bindHeaderSortEvents();
-
-  // 헤더 "전체 선택" 체크박스 - clone 과정에서 원본 바인딩이 유실되어 직접 리스너 부착
+  // 헤더 "전체 선택" 체크박스 - clone 과정에서 원본 바인딩이 유실되어 직접 리스너 부착.
+  // 다중선택 툴바가 삭제된 상태라 순수하게 전체 선택/해제 토글만 한다.
   const bindSelectAllCheckbox = () => {
     const selectAllCheckbox = newTable.querySelector('thead tr:not(.table__toolbar-warp) input[type="checkbox"]');
     if (!selectAllCheckbox) return;
     selectAllCheckbox.addEventListener('change', () => {
       newTable.querySelectorAll('tbody input[type="checkbox"][name="data"]')
         .forEach(cb => { cb.checked = selectAllCheckbox.checked; });
-      updateBlackRedToolbar();
     });
   };
   bindSelectAllCheckbox();
@@ -770,13 +806,8 @@ function renderCustomPaginatedTable(matchedRows, originalTable, matchedItems) {
   originalTable.style.setProperty("display", "none", "important");
   originalTable.parentNode.insertBefore(newTable, originalTable.nextSibling);
 
-  // 블랙/레드 툴바를 원본의 "발행글 리스트" 툴바 슬롯에 배치
-  const toolbarSlot = newTable.querySelector('.table__toolbar');
-  if (toolbarSlot) {
-    toolbarSlot.appendChild(ensureBlackRedToolbar());
-  } else {
-    newTable.parentNode.insertBefore(ensureBlackRedToolbar(), newTable);
-  }
+  // 다중선택 툴바(PC홈추천/블랙글/레드글 등록)는 삭제됨 - 체크박스는 그대로 있지만
+  // 그 위에 뜨던 액션 버튼 툴바는 더 이상 생성되지 않는다.
 
   goToPage(1);
 }
@@ -847,7 +878,7 @@ window.addEventListener("message", (event) => {
 
     console.log(`✅ [필터링 완료] 최종 검색 일치 항목: ${matchedRows.length}개`);
 
-    renderCustomPaginatedTable(matchedRows, originalTable, matchedItems);
+    renderCustomPaginatedTable(matchedRows, originalTable);
     toggleOriginalPagination(false);
 
     const iframe = document.getElementById("my-extension-modal-iframe");
@@ -935,332 +966,18 @@ window.addEventListener("message", (event) => {
   }
 
   if (event.data.type === "REQUEST_DOWNLOAD") {
-    downloadMatchedResultsCSV();
+    downloadMatchedResultsXlsx();
   }
 });
-
-// ══════════════════════════════════════════════════════════════════
-// § 3-1. xlsx 생성 유틸 (예전엔 xlsx-writer.js로 분리돼 있었으나 파일 수를 줄이기 위해 통합)
-// ══════════════════════════════════════════════════════════════════
-// 외부 라이브러리 없이 순수 JS로 ZIP+OOXML을 직접 구현해 xlsx 파일 생성
-// window.ATF_buildXlsxBlob(sheetName, columns, dataRows) => Blob
-(function () {
-  // CRC32 (ZIP 포맷 필수)
-  const CRC_TABLE = (() => {
-    const table = [];
-    for (let n = 0; n < 256; n++) {
-      let c = n;
-      for (let k = 0; k < 8; k++) {
-        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-      }
-      table[n] = c >>> 0;
-    }
-    return table;
-  })();
-
-  function crc32(bytes) {
-    let crc = 0xFFFFFFFF;
-    for (let i = 0; i < bytes.length; i++) {
-      crc = (crc >>> 8) ^ CRC_TABLE[(crc ^ bytes[i]) & 0xFF];
-    }
-    return (crc ^ 0xFFFFFFFF) >>> 0;
-  }
-
-  // 압축 없는 STORED 방식 ZIP 작성기
-  function writeUint32LE(arr, offset, val) {
-    arr[offset] = val & 0xFF;
-    arr[offset + 1] = (val >>> 8) & 0xFF;
-    arr[offset + 2] = (val >>> 16) & 0xFF;
-    arr[offset + 3] = (val >>> 24) & 0xFF;
-  }
-  function writeUint16LE(arr, offset, val) {
-    arr[offset] = val & 0xFF;
-    arr[offset + 1] = (val >>> 8) & 0xFF;
-  }
-
-  function buildZip(files) {
-    const encoder = new TextEncoder();
-    const localParts = [];
-    const centralParts = [];
-    let offset = 0;
-
-    files.forEach((file) => {
-      const nameBytes = encoder.encode(file.name);
-      const data = file.data;
-      const crc = crc32(data);
-
-      const localHeader = new Uint8Array(30 + nameBytes.length);
-      writeUint32LE(localHeader, 0, 0x04034b50);
-      writeUint16LE(localHeader, 4, 20);
-      writeUint16LE(localHeader, 6, 0);
-      writeUint16LE(localHeader, 8, 0);
-      writeUint16LE(localHeader, 10, 0);
-      writeUint16LE(localHeader, 12, 0x21);
-      writeUint32LE(localHeader, 14, crc);
-      writeUint32LE(localHeader, 18, data.length);
-      writeUint32LE(localHeader, 22, data.length);
-      writeUint16LE(localHeader, 26, nameBytes.length);
-      writeUint16LE(localHeader, 28, 0);
-      localHeader.set(nameBytes, 30);
-
-      localParts.push(localHeader, data);
-
-      const centralHeader = new Uint8Array(46 + nameBytes.length);
-      writeUint32LE(centralHeader, 0, 0x02014b50);
-      writeUint16LE(centralHeader, 4, 20);
-      writeUint16LE(centralHeader, 6, 20);
-      writeUint16LE(centralHeader, 8, 0);
-      writeUint16LE(centralHeader, 10, 0);
-      writeUint16LE(centralHeader, 12, 0);
-      writeUint16LE(centralHeader, 14, 0x21);
-      writeUint32LE(centralHeader, 16, crc);
-      writeUint32LE(centralHeader, 20, data.length);
-      writeUint32LE(centralHeader, 24, data.length);
-      writeUint16LE(centralHeader, 28, nameBytes.length);
-      writeUint16LE(centralHeader, 30, 0);
-      writeUint16LE(centralHeader, 32, 0);
-      writeUint16LE(centralHeader, 34, 0);
-      writeUint16LE(centralHeader, 36, 0);
-      writeUint32LE(centralHeader, 38, 0);
-      writeUint32LE(centralHeader, 42, offset);
-      centralHeader.set(nameBytes, 46);
-      centralParts.push(centralHeader);
-
-      offset += localHeader.length + data.length;
-    });
-
-    const centralDirOffset = offset;
-    let centralDirSize = 0;
-    centralParts.forEach(p => { centralDirSize += p.length; });
-
-    const eocd = new Uint8Array(22);
-    writeUint32LE(eocd, 0, 0x06054b50);
-    writeUint16LE(eocd, 4, 0);
-    writeUint16LE(eocd, 6, 0);
-    writeUint16LE(eocd, 8, files.length);
-    writeUint16LE(eocd, 10, files.length);
-    writeUint32LE(eocd, 12, centralDirSize);
-    writeUint32LE(eocd, 16, centralDirOffset);
-    writeUint16LE(eocd, 20, 0);
-
-    const totalSize = offset + centralDirSize + eocd.length;
-    const result = new Uint8Array(totalSize);
-    let pos = 0;
-    localParts.forEach(p => { result.set(p, pos); pos += p.length; });
-    centralParts.forEach(p => { result.set(p, pos); pos += p.length; });
-    result.set(eocd, pos);
-
-    return result;
-  }
-
-  function escapeXml(str) {
-    return String(str ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;')
-      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
-  }
-
-  // 엑셀 열 문자(A~Z, AA, AB...) 계산 - 컬럼 수 제한 없이 정확한 열 문자 생성
-  function colIndexToLetters(index) {
-    let n = index + 1;
-    let result = '';
-    while (n > 0) {
-      const rem = (n - 1) % 26;
-      result = String.fromCharCode(65 + rem) + result;
-      n = Math.floor((n - 1) / 26);
-    }
-    return result;
-  }
-
-  // 문자열 표시 너비 계산 (한글/한자 등 2바이트 문자는 넓게 취급)
-  function visualWidth(str) {
-    let width = 0;
-    for (const ch of String(str ?? '')) {
-      width += ch.charCodeAt(0) > 0x2E80 ? 1.9 : 1;
-    }
-    return width;
-  }
-
-  // 최소 유효한 xlsx 구성(OOXML) 생성
-  function buildXlsxBlob(sheetName, columns, dataRows) {
-    const encoder = new TextEncoder();
-
-    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-<Default Extension="xml" ContentType="application/xml"/>
-<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
-</Types>`;
-
-    const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-</Relationships>`;
-
-    const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-</Relationships>`;
-
-    const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<sheets><sheet name="${escapeXml(sheetName)}" sheetId="1" r:id="rId1"/></sheets>
-</workbook>`;
-
-    // 스타일: 0=기본, 1=헤더(굵게+배경+가운데), 2=가운데정렬, 3=하이퍼링크
-    const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<fonts count="3">
-<font><sz val="11"/><name val="Calibri"/></font>
-<font><b/><sz val="11"/><name val="Calibri"/></font>
-<font><u/><sz val="11"/><color rgb="FF0563C1"/><name val="Calibri"/></font>
-</fonts>
-<fills count="3">
-<fill><patternFill patternType="none"/></fill>
-<fill><patternFill patternType="gray125"/></fill>
-<fill><patternFill patternType="solid"><fgColor rgb="FFFCE9AE"/><bgColor indexed="64"/></patternFill></fill>
-</fills>
-<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
-<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="4">
-<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center"/></xf>
-<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center"/></xf>
-</cellXfs>
-<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
-</styleSheet>`;
-
-    const STYLE_HEADER = 1;
-    const STYLE_CENTER = 2;
-    const STYLE_HYPERLINK = 3;
-
-    const styleForColumn = (col) => {
-      if (col.hyperlink) return STYLE_HYPERLINK;
-      if (col.align === 'center') return STYLE_CENTER;
-      return 0;
-    };
-
-    const cellXml = (colIndex, rowIndex, value, styleIdx, isNumeric) => {
-      const ref = `${colIndexToLetters(colIndex)}${rowIndex}`;
-      const s = styleIdx ? ` s="${styleIdx}"` : '';
-      if (isNumeric && value !== '' && value !== null && !isNaN(Number(value))) {
-        return `<c r="${ref}"${s}><v>${Number(value)}</v></c>`;
-      }
-      return `<c r="${ref}" t="inlineStr"${s}><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>`;
-    };
-
-    const HEADER_ROW_HEIGHT = 20;
-    const DATA_ROW_HEIGHT = 20;
-
-    const rowsXml = [];
-    rowsXml.push(
-      `<row r="1" ht="${HEADER_ROW_HEIGHT}" customHeight="1">${columns.map((col, i) => cellXml(i, 1, col.header, STYLE_HEADER, false)).join('')}</row>`
-    );
-
-    const hyperlinkRels = [];
-    const hyperlinkRefs = [];
-
-    dataRows.forEach((row, rIdx) => {
-      const rowNum = rIdx + 2;
-      const cells = columns.map((col, cIdx) => {
-        const value = row[cIdx];
-        const styleIdx = styleForColumn(col);
-
-        if (col.hyperlink && value) {
-          const rId = `rIdLink${hyperlinkRels.length + 1}`;
-          hyperlinkRels.push({ id: rId, target: value });
-          hyperlinkRefs.push({ ref: `${colIndexToLetters(cIdx)}${rowNum}`, rId });
-        }
-
-        return cellXml(cIdx, rowNum, value, styleIdx, !!col.numeric);
-      });
-      rowsXml.push(`<row r="${rowNum}" ht="${DATA_ROW_HEIGHT}" customHeight="1">${cells.join('')}</row>`);
-    });
-
-    // 자동 열 너비 (헤더+데이터 중 최대 표시너비, widthCap 상한)
-    const colsXml = columns.map((col, i) => {
-      let maxW = visualWidth(col.header);
-      dataRows.forEach(row => {
-        const w = visualWidth(row[i]);
-        if (w > maxW) maxW = w;
-      });
-      const cap = col.widthCap || 60;
-      const width = Math.max(8, Math.min(Math.ceil(maxW) + 3, cap));
-      return `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`;
-    }).join('');
-
-    const hyperlinksXml = hyperlinkRefs.length
-      ? `<hyperlinks>${hyperlinkRefs.map(h => `<hyperlink ref="${h.ref}" r:id="${h.rId}"/>`).join('')}</hyperlinks>`
-      : '';
-
-    const sheet1 = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<cols>${colsXml}</cols>
-<sheetData>${rowsXml.join('')}</sheetData>
-${hyperlinksXml}
-</worksheet>`;
-
-    const files = [
-      { name: '[Content_Types].xml', data: encoder.encode(contentTypes) },
-      { name: '_rels/.rels', data: encoder.encode(rootRels) },
-      { name: 'xl/workbook.xml', data: encoder.encode(workbook) },
-      { name: 'xl/_rels/workbook.xml.rels', data: encoder.encode(workbookRels) },
-      { name: 'xl/styles.xml', data: encoder.encode(styles) },
-      { name: 'xl/worksheets/sheet1.xml', data: encoder.encode(sheet1) }
-    ];
-
-    if (hyperlinkRels.length > 0) {
-      const sheetRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-${hyperlinkRels.map(h => `<Relationship Id="${h.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(h.target)}" TargetMode="External"/>`).join('\n')}
-</Relationships>`;
-      files.push({ name: 'xl/worksheets/_rels/sheet1.xml.rels', data: encoder.encode(sheetRels) });
-    }
-
-    const zipBytes = buildZip(files);
-    return new Blob([zipBytes], {
-      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    });
-  }
-
-  window.ATF_buildXlsxBlob = buildXlsxBlob;
-})();
+// xlsx 생성은 xlsx-writer.js에 분리돼 있음 - 완성된 Blob이 필요할 때 window.ATF_buildXlsxBlob()만 호출한다.
 
 // ══════════════════════════════════════════════════════════════════
 // § 4. xlsx 다운로드
 // ══════════════════════════════════════════════════════════════════
 
-// background.js에 브런치 실제 주소(vanity handle) 단건 조회 요청 (멤버십 전문 조회용)
-function resolveBrunchHandles(items) {
-  return new Promise((resolve) => {
-    try {
-      chrome.runtime.sendMessage(
-        { type: "RESOLVE_BRUNCH_HANDLES", items },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            console.warn("⚠️ 브런치 실제 주소 조회 실패:", chrome.runtime.lastError.message);
-            resolve({});
-            return;
-          }
-          resolve((response && response.handles) || {});
-        }
-      );
-    } catch (e) {
-      console.warn("⚠️ 브런치 실제 주소 조회 요청 실패:", e);
-      resolve({});
-    }
-  });
-}
 
 // 대량 다운로드용 - 포트 연결로 진행률(done/total)을 실시간으로 받는 버전
-// 피드백: 다운로드 중 화면에 아무 표시가 없어 "멈춘 건가" 오해하기 쉬웠음 → 진행 상황 스트리밍 추가
+// 다운로드 중 진행 상황(작가 N/M명)을 팝업에 실시간 스트리밍
 function resolveBrunchHandlesWithProgress(items, onProgress) {
   return new Promise((resolve) => {
     let settled = false;
@@ -1290,8 +1007,9 @@ function resolveBrunchHandlesWithProgress(items, onProgress) {
   });
 }
 
-// 검색 결과 다운로드 (제목/URL/작가명 xlsx)
-async function downloadMatchedResultsCSV() {
+// 검색결과 다운로드 오케스트레이션 - 작가 주소 조회, 진행상황 안내, xlsx 조립은
+// xlsx-writer.js에 위임, 완성된 파일 다운로드 트리거까지 담당
+async function downloadMatchedResultsXlsx() {
   const iframe = document.getElementById("my-extension-modal-iframe");
   const notifyPopup = (payload) => {
     if (iframe && iframe.contentWindow) {
@@ -1434,33 +1152,32 @@ function onModalDragEnd() {
   document.removeEventListener("mouseup", onModalDragEnd);
 }
 
+
 // ══════════════════════════════════════════════════════════════════
-// § 6. "멤버십 전문 조회" 버튼 클릭 처리
-// (나머지 액션 트리거·뱃지 렌더링은 content-actions.js 참고 - 이건 조회 후 새 탭 이동이라 성격이 달라 여기 유지)
+// § 7. 초기화 시작 (SPA 페이지 이동 감지 포함)
 // ══════════════════════════════════════════════════════════════════
-document.addEventListener('click', (e) => {
-  const membershipBtn = e.target && e.target.closest(
-    `[${CUSTOM_RESULT_ATTR}="${CUSTOM_RESULT_TABLE_ID}"] [data-atf-membership-article-no]`
-  );
-  if (!membershipBtn) return;
-  if (membershipBtn.disabled) return;
-  const { atfMembershipUserId: userId, atfMembershipArticleNo: articleNo } = membershipBtn.dataset;
-  membershipBtn.disabled = true;
-  const labelSpan = membershipBtn.querySelector('span');
-  const originalText = labelSpan ? labelSpan.textContent : '';
-  if (labelSpan) labelSpan.textContent = '조회 중...';
-  resolveBrunchHandles([{ userId, articleNo }])
-    .then((handles) => {
-      const handle = handles && handles[userId];
-      if (!handle) {
-        atfAlert('작가의 공개 주소를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.');
-        return;
-      }
-      const url = `${ATF_CONFIG.MEMBERSHIP_VIEW_ORIGIN}/@${encodeURIComponent(handle)}/${encodeURIComponent(articleNo)}/html?who=brunchCloud`;
-      window.open(url, '_blank', 'noopener,noreferrer');
-    })
-    .finally(() => {
-      membershipBtn.disabled = false;
-      if (labelSpan) labelSpan.textContent = originalText;
-    });
+// 이 파일의 다른 모든 함수(checkAndInitExtension, injectExtensionButton 등)가 위에서
+// 이미 정의된 뒤에 실행되어야 하므로, 파일의 맨 마지막에 위치한다.
+
+let mutationDebounceTimer = null;
+
+// MutationObserver: DOM 변경 감지 시 URL이 바뀌었으면 재초기화, 버튼이 사라졌으면 재삽입
+// DOM 변경이 잦아 콜백이 과도하게 호출되지 않도록 100ms 디바운스
+const observer = new MutationObserver(() => {
+  if (isSearchingProcess) return;
+
+  clearTimeout(mutationDebounceTimer);
+  mutationDebounceTimer = setTimeout(() => {
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+      checkAndInitExtension();
+    }
+    injectExtensionButton();
+  }, 100);
 });
+
+// 최상위 프레임에서만 실행 (iframe 중복 실행 방지)
+if (window === window.top) {
+  observer.observe(document.body, { childList: true, subtree: true });
+  checkAndInitExtension();
+}

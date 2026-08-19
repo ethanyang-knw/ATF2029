@@ -1,7 +1,4 @@
-/* 피드백: 외부 구글폰트 @import가 CSP 정책상 차단될 수 있고, 팝업을 열 때마다 외부(구글) 서버로
-   요청이 나가는 문제 → 실제 폰트 파일을 받는 대신, OS에 이미 설치된 폰트로 비슷한 느낌을 내는
-   시스템 폰트 스택으로 교체. -apple-system/시스템 폰트는 대부분 OS에 기본 탑재돼 네트워크 요청이
-   전혀 필요 없다. */
+/* OS 기본 폰트 스택 - 외부 폰트 파일 요청 없이 시스템 폰트로 렌더링 */
 :root {
   --font-sans: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
@@ -300,26 +297,6 @@ select.custom-select {
   gap: 4px;
   flex: 1 1 auto;
   min-width: 150px;
-}
-
-.date-picker {
-  width: 128px;
-  flex-shrink: 0;
-  padding: 5px 4px 5px 8px;
-  font-size: 11px;
-  text-align: center;
-  font-family: var(--font-mono);
-  cursor: pointer;
-}
-
-.date-picker::-webkit-calendar-picker-indicator {
-  margin-left: 0;
-  padding: 0;
-  cursor: pointer;
-  opacity: 0.6;
-}
-.date-picker::-webkit-calendar-picker-indicator:hover {
-  opacity: 1;
 }
 
 /* ── 커스텀 날짜 표시 트리거 ── */

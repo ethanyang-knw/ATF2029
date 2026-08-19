@@ -25,10 +25,9 @@
       ],
       "js": [
         "console-log.js",
-        "content-globals.js",
-        "content-main.js",
-        "content-actions.js",
-        "content-bootstrap.js"
+        "xlsx-writer.js",
+        "content-badges.js",
+        "content-main.js"
       ],
       "run_at": "document_end"
     }

@@ -3,7 +3,8 @@
 
 const MAX_CONCURRENT_REQUESTS = 6;
 const REQUEST_TIMEOUT_MS = 8000;
-const HANDLE_CACHE_KEY = "atf_handle_cache";
+const HANDLE_CACHE_KEY = "atf_handle_cache_v2";
+const HANDLE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30일 (필명 변경 대비)
 
 // chrome.storage.local에서 핸들 캐시 불러오기
 async function loadHandleCache() {
@@ -24,22 +25,26 @@ async function saveHandleCache(cache) {
   }
 }
 
-// userId+articleNo로 실제 공개 주소(handle) 1건 조회
-// 피드백: GET으로 페이지 전체를 받아서 버리던 것 → HEAD 요청으로 트래픽 절감
+// userId+articleNo로 실제 공개 주소(handle) 1건 조회. HEAD로 우선 시도하고,
+// 서버가 HEAD를 거부하면(405/501 등) GET으로 1회 폴백한다.
 async function resolveOneHandle(userId, articleNo) {
   const safeUserId = encodeURIComponent(userId);
   const safeArticleNo = encodeURIComponent(articleNo);
+  const url = `https://brunch.co.kr/@@${safeUserId}/${safeArticleNo}`;
+  const HANDLE_URL_PATTERN = /^https:\/\/brunch\.co\.kr\/@([^/?#]+)/;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const res = await fetch(`https://brunch.co.kr/@@${safeUserId}/${safeArticleNo}`, {
-      method: "HEAD",
-      redirect: "follow",
-      signal: controller.signal
-    });
-    const match = res.url.match(/^https:\/\/brunch\.co\.kr\/@([^/?#]+)/);
+    let res = await fetch(url, { method: "HEAD", redirect: "follow", signal: controller.signal });
+    let match = res.url.match(HANDLE_URL_PATTERN);
+
+    if (!match && (res.status === 405 || res.status === 501 || !res.ok)) {
+      res = await fetch(url, { method: "GET", redirect: "follow", signal: controller.signal });
+      match = res.url.match(HANDLE_URL_PATTERN);
+    }
+
     return match ? match[1] : null;
   } catch (e) {
     console.warn(`⚠️ [background.js] ${userId} 주소 조회 실패:`, e.name === "AbortError" ? "타임아웃" : e);
@@ -49,9 +54,8 @@ async function resolveOneHandle(userId, articleNo) {
   }
 }
 
-// 여러 건을 동시 6개로 제한해서 조회하는 워커 풀. 캐시 적중분은 네트워크 요청 없이 즉시 반환
-// 피드백: 매 다운로드마다 같은 작가를 재조회하던 것 → chrome.storage.local 캐싱 + 동시성 제한 추가
-// onProgress(done, total): 대량 다운로드 시 진행률 표시용 콜백
+// 여러 건을 동시 6개로 제한해서 조회하는 워커 풀. 캐시 적중(TTL 이내)분은 네트워크 요청 없이
+// 즉시 반환. onProgress(done, total)는 대량 다운로드 시 진행률 표시용 콜백.
 async function resolveHandlesWithConcurrencyLimit(items, onProgress) {
   const cache = await loadHandleCache();
   const handles = {};
@@ -61,8 +65,10 @@ async function resolveHandlesWithConcurrencyLimit(items, onProgress) {
   for (const { userId, articleNo } of items) {
     if (!userId || !articleNo) continue;
     if (handles[userId] !== undefined) continue;
-    if (cache[userId]) {
-      handles[userId] = cache[userId];
+
+    const cached = cache[userId];
+    if (cached && cached.handle && (Date.now() - cached.at) < HANDLE_TTL_MS) {
+      handles[userId] = cached.handle;
       doneCount++;
       continue;
     }
@@ -79,7 +85,7 @@ async function resolveHandlesWithConcurrencyLimit(items, onProgress) {
       const { userId, articleNo } = todo[cursor++];
       const handle = await resolveOneHandle(userId, articleNo);
       handles[userId] = handle;
-      if (handle) cache[userId] = handle;
+      if (handle) cache[userId] = { handle, at: Date.now() };
       doneCount++;
       if (onProgress) onProgress(doneCount, totalUnique);
     }
@@ -94,18 +100,7 @@ async function resolveHandlesWithConcurrencyLimit(items, onProgress) {
   return handles;
 }
 
-// 단발성 조회 (멤버십 전문 조회 등 1건짜리 즉시 조회용, 진행률 불필요)
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== "RESOLVE_BRUNCH_HANDLES") return;
-  const items = Array.isArray(message.items) ? message.items : [];
-  resolveHandlesWithConcurrencyLimit(items).then((handles) => {
-    sendResponse({ handles });
-  });
-  return true;
-});
-
 // 포트 기반 진행률 스트리밍 조회 (대량 다운로드용)
-// 피드백: "다운로드가 오래 걸리는데 멈춘 건지 알 수 없다" → 진행 상황을 실시간 전송하도록 추가
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "resolveHandlesProgress") return;
 
