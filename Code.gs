@@ -1,30 +1,44 @@
 // Code.gs
 // 기능: 구글 시트 연동용 Apps Script - 키워드 조회(doGet) / 등록(doPost)
 
+// 저장/조회를 허용할 시트 화이트리스트 - 여기 없는 gid는 서버에서 거부.
+// 클라이언트 화면엔 3개만 노출되지만 엔드포인트를 직접 호출하면 임의 gid를 보낼 수 있어서
+// 서버 단에서도 반드시 검증해야 함 (sheetName은 위조 가능하므로 신뢰하지 않음)
+const ALLOWED_SHEETS = {
+  "0": "종교",
+  "1945752687": "홍보",
+  "1425243656": "노출 불가 키워드"
+};
+
+function getAllowedSheet_(spreadsheet, targetGid) {
+  const gid = String(targetGid ?? "");
+
+  if (!Object.prototype.hasOwnProperty.call(ALLOWED_SHEETS, gid)) {
+    throw new Error("invalid_target_sheet");
+  }
+
+  const sheet = spreadsheet.getSheets().find(item => String(item.getSheetId()) === gid);
+
+  if (!sheet || sheet.getName() !== ALLOWED_SHEETS[gid]) {
+    throw new Error("sheet_not_found");
+  }
+
+  return sheet;
+}
+
 function doGet(e) {
+  try {
+    assertAllowedUser_();
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ result: "forbidden" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   try {
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 
     const targetGid = e.parameter && e.parameter.targetGid !== undefined ? String(e.parameter.targetGid) : "0";
-    const sheetNameHint = e.parameter ? e.parameter.sheetName : "";
-
-    const sheets = spreadsheet.getSheets();
-    let sheet = null;
-
-    for (let i = 0; i < sheets.length; i++) {
-      if (String(sheets[i].getSheetId()) === targetGid) {
-        sheet = sheets[i];
-        break;
-      }
-    }
-
-    if (!sheet && sheetNameHint) {
-      sheet = spreadsheet.getSheetByName(sheetNameHint);
-    }
-
-    if (!sheet) {
-      sheet = sheets[0];
-    }
+    const sheet = getAllowedSheet_(spreadsheet, targetGid);
 
     const lastRow = sheet.getLastRow();
     let keywords = [];
@@ -73,6 +87,8 @@ function doPost(e) {
       .setMimeType(ContentService.MimeType.JSON);
   }
 
+  const lock = LockService.getDocumentLock();
+
   try {
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -89,25 +105,11 @@ function doPost(e) {
     }
 
     const targetGid = data.targetGid !== undefined ? String(data.targetGid) : "0";
-    const sheetNameHint = data.sheetName || "";
+    const sheet = getAllowedSheet_(spreadsheet, targetGid);
 
-    const sheets = spreadsheet.getSheets();
-    let sheet = null;
-
-    for (let i = 0; i < sheets.length; i++) {
-      if (String(sheets[i].getSheetId()) === targetGid) {
-        sheet = sheets[i];
-        break;
-      }
-    }
-
-    if (!sheet && sheetNameHint) {
-      sheet = spreadsheet.getSheetByName(sheetNameHint);
-    }
-
-    if (!sheet) {
-      sheet = sheets[0];
-    }
+    // 동시 요청(클라이언트가 최대 2개까지 동시 전송)이 같은 빈 행을 골라 서로 덮어쓰지 않도록
+    // 빈 행 탐색~저장 구간 전체를 잠금으로 보호
+    lock.waitLock(30000);
 
     let targetRow = 2;
     while (sheet.getRange(targetRow, 2).getValue() !== "") {
@@ -138,6 +140,8 @@ function doPost(e) {
   } catch (error) {
     return ContentService.createTextOutput(JSON.stringify({ result: "error", error: error.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
   }
 }
 

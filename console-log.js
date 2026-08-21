@@ -1,6 +1,5 @@
 // console-log.js
 // 기능: 검색 중 로그를 모아뒀다가 오류 발생 시 자동으로 txt 파일 저장
-// 격리 world(manifest 로드) + 메인 world(content-main.js가 동적 주입) 양쪽에서 실행됨
 
 const atfLogBuffer = [];
 const ATF_LOG_MAX_LINES = 5000; // 상한선 - 오래된 줄부터 자동으로 밀어냄
@@ -44,13 +43,6 @@ function downloadAtfLogBufferAsTxt({ force = false } = {}) {
   }
 }
 
-// 현재 world 판별용 nonce. 메인 world로 동적 주입될 때만 <script> 태그에 실려 온다
-// (격리 world는 대응하는 <script> 태그가 없어 document.currentScript가 항상 null)
-const ATF_NONCE = (document.currentScript && document.currentScript.dataset)
-  ? document.currentScript.dataset.atfNonce || null
-  : null;
-const IS_MAIN_WORLD = !!ATF_NONCE;
-
 const __atfOrigConsoleLog = console.log.bind(console);
 const __atfOrigConsoleWarn = console.warn.bind(console);
 const __atfOrigConsoleError = console.error.bind(console);
@@ -59,34 +51,16 @@ const __atfStringifyArg = (a) => {
   try { return JSON.stringify(a); } catch (e) { return String(a); }
 };
 
-// 이 world의 로그를 자신의 버퍼에 직접 기록. 메인 world일 때만 격리 world로 nonce와 함께 중계
-const __atfRecordLine = (line) => {
-  pushToAtfLogBuffer(line);
-  if (IS_MAIN_WORLD) {
-    try {
-      window.postMessage({ type: "ATF_CONSOLE_LINE", nonce: ATF_NONCE, message: line }, "*");
-    } catch (e) { /* 무시 */ }
-  }
-};
-
 // console.log/warn/error 오버라이드 - 원래 동작 유지 + 버퍼 기록
 console.log = (...args) => {
   __atfOrigConsoleLog(...args);
-  __atfRecordLine(args.map(__atfStringifyArg).join(" "));
+  pushToAtfLogBuffer(args.map(__atfStringifyArg).join(" "));
 };
 console.warn = (...args) => {
   __atfOrigConsoleWarn(...args);
-  __atfRecordLine("[WARN] " + args.map(__atfStringifyArg).join(" "));
+  pushToAtfLogBuffer("[WARN] " + args.map(__atfStringifyArg).join(" "));
 };
 console.error = (...args) => {
   __atfOrigConsoleError(...args);
-  __atfRecordLine("[ERROR] " + args.map(__atfStringifyArg).join(" "));
+  pushToAtfLogBuffer("[ERROR] " + args.map(__atfStringifyArg).join(" "));
 };
-
-// 격리 world 수신 리스너 - nonce가 자신의 window.__ATF_NONCE__와 일치하는 메시지만 신뢰
-window.addEventListener("message", (event) => {
-  if (event.source !== window || event.origin !== location.origin) return;
-  if (!event.data || event.data.type !== "ATF_CONSOLE_LINE") return;
-  if (event.data.nonce !== window.__ATF_NONCE__) return;
-  pushToAtfLogBuffer(event.data.message);
-});

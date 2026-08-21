@@ -3,16 +3,12 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
   --header-bg:  #000000;
-  --tab-bg:     #384660;
   --body-bg:    #EDF0F5;
   --card-bg:    #FFFFFF;
   --border:     #DCE2EE;
   --accent:     #5B8DEF;
-  --success:    #0B8A45;
   --error:      #C0392B;
-  --warn:       #D68910;
   --text-h:     #FFFFFF;
-  --text-tab:   #7888A8;
   --text-main:  #1C2A3A;
   --text-sub:   #6070A0;
   --text-muted: #A0AABF;
@@ -126,18 +122,7 @@ body {
   min-height: 50px; /* 카드 3개 높이 통일 */
 }
 
-/* 발행 시각 조건 해제 시 안내 문구 */
-.date-disabled-note {
-  margin-top: 6px;
-  padding: 6px 8px;
-  font-size: 11px;
-  color: var(--warn);
-  background: rgba(214, 137, 16, 0.08);
-  border: 1px solid rgba(214, 137, 16, 0.25);
-  border-radius: 6px;
-}
-
-/* "캐시 무시하고 재검색" 체크박스 - 발행 시각 체크박스 바로 아래 들여쓰기 배치 */
+/* "캐시 무시하고 재검색" 체크박스 - 발행 시각 카드 바로 아래 들여쓰기 배치 */
 .force-refresh-row {
   display: flex;
   align-items: center;
@@ -207,21 +192,11 @@ body {
   justify-content: center;
   gap: 6px;
   flex-shrink: 0;
-  cursor: pointer;
 }
 
 .label-box label {
-  cursor: pointer;
   user-select: none;
   white-space: nowrap;
-}
-
-.condition-toggle-chk {
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
-  accent-color: var(--error);
-  flex-shrink: 0;
 }
 
 /* ── 드롭다운 & 입력창 ── */
@@ -276,14 +251,13 @@ select.custom-select {
 
 /* ── 24시간 실시간 범위 표시 뱃지 ── */
 .date-range-badge {
-  flex: 1 1 auto; /* 절대위치 버튼 제외한 남는 공간 채움 */
-  min-width: 150px;
+  flex: 0 0 auto; /* 남는 공간을 억지로 채우지 않고 텍스트 크기만큼만 표시 */
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-sub);
   background: var(--body-bg);
   border: 1px solid var(--border);
-  padding: 8px 10px;
+  padding: 8px 24px; /* 좌우 여백을 넓혀 박스 너비 확장 */
   border-radius: 6px;
   text-align: center;
   white-space: nowrap;
@@ -295,16 +269,17 @@ select.custom-select {
   align-items: center;
   justify-content: flex-start;
   gap: 4px;
-  flex: 1 1 auto;
   min-width: 150px;
+  margin-top: 6px;
+  margin-left: 11px; /* force-refresh-row와 동일한 들여쓰기로 시각적 통일 */
 }
 
-/* ── 커스텀 날짜 표시 트리거 ── */
-.date-display {
+/* ── 네이티브 날짜 입력창 (직접 지정) ── */
+.date-picker {
   flex: 1 1 0;
   min-width: 0;
-  padding: 8px 4px;
-  font-size: 10.5px;
+  padding: 7px 6px;
+  font-size: 11px;
   text-align: center;
   font-family: var(--font-mono);
   cursor: pointer;
@@ -314,118 +289,17 @@ select.custom-select {
   color: var(--text-main);
   transition: border-color 0.2s;
 }
-.date-display:hover,
-.date-display:focus {
+.date-picker:hover,
+.date-picker:focus {
   border-color: var(--accent);
   outline: none;
 }
-.date-display.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(91, 141, 239, 0.15);
-}
-
-/* ── 커스텀 달력 팝업 ── */
-.calendar-popup {
-  display: none;
-  position: absolute;
-  z-index: 1100;
-  width: 240px;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
-  padding: 10px;
-}
-.calendar-popup.active {
-  display: block;
-}
-
-.calendar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.calendar-month-year {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-main);
-}
-
-.calendar-nav {
-  width: 22px;
-  height: 22px;
-  border: none;
-  background: var(--body-bg);
-  border-radius: 5px;
-  color: var(--text-sub);
-  font-size: 13px;
+.date-picker::-webkit-calendar-picker-indicator {
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  opacity: 0.6;
 }
-.calendar-nav:hover {
-  background: var(--accent);
-  color: #fff;
-}
-
-.calendar-weekdays {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  margin-bottom: 2px;
-}
-.calendar-weekdays span {
-  text-align: center;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-muted);
-  padding: 4px 0;
-}
-
-.calendar-days {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 2px;
-}
-
-.calendar-day {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 26px;
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-main);
-  border-radius: 50%;
-  cursor: pointer;
-  background: transparent;
-}
-.calendar-day:hover {
-  background: var(--body-bg);
-}
-.calendar-day.other-month {
-  color: var(--text-muted);
-  opacity: 0.5;
-}
-.calendar-day.today {
-  border: 1px solid var(--error);
-  color: var(--error);
-  font-weight: 700;
-}
-.calendar-day.selected {
-  background: var(--error);
-  color: #fff;
-  font-weight: 700;
-}
-.calendar-day.disabled {
-  color: var(--text-muted);
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-.calendar-day.disabled:hover {
-  background: transparent;
+.date-picker::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
 }
 
 .date-separator {
@@ -509,7 +383,7 @@ select.custom-select {
   font-size: 12px;
   font-weight: 600;
   border-radius: 6px;
-  padding: 8px 14px;
+  padding: 8px 17px;
   cursor: pointer;
   border: 1px solid transparent;
   transition: all 0.15s;

@@ -9,15 +9,9 @@
   "host_permissions": [
     "https://brunch-admin.onkakao.net/*",
     "https://script.google.com/a/macros/knworks.co.kr/*",
-    "https://script.googleusercontent.com/*",
-    "https://brunch.co.kr/@*"
+    "https://script.googleusercontent.com/*"
   ],
-  "background": {
-    "service_worker": "background.js"
-  },
-  "action": {
-    "default_popup": "popup.html"
-  },
+  "action": {},
   "content_scripts": [
     {
       "matches": [
@@ -26,7 +20,6 @@
       "js": [
         "console-log.js",
         "xlsx-writer.js",
-        "content-badges.js",
         "content-main.js"
       ],
       "run_at": "document_end"
@@ -35,8 +28,6 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "console-log.js",
-        "injected.js",
         "popup.html",
         "popup.css"
       ],

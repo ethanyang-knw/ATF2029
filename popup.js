@@ -23,7 +23,6 @@ document.addEventListener("DOMContentLoaded", () => {
     "no_expose": { gid: 1425243656, name: "노출 불가 키워드" }
   };
 
-  let currentFetchingGid = null;
   let searchTimeoutId = null;
   let downloadTimeoutId = null;
 
@@ -49,37 +48,14 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnDownload = document.getElementById("btn-download");
   const chkForceRefresh = document.getElementById("chk-force-refresh");
 
-  const chkDisableDate = document.getElementById("chk-disable-date");
-  const chkDisableInclude = document.getElementById("chk-disable-include");
-  const chkDisableExclude = document.getElementById("chk-disable-exclude");
-
-  const dateDisabledNote = document.getElementById("date-disabled-note");
-
-  // 발행 시각 조건 끄면 기본 조회범위가 최근 1일로 좁혀짐을 미리 안내
-  function updateDateDisabledNote() {
-    if (!dateDisabledNote) return;
-    dateDisabledNote.style.display = chkDisableDate?.checked ? "none" : "block";
-  }
-  chkDisableDate?.addEventListener("change", updateDateDisabledNote);
-  updateDateDisabledNote();
-
   const dateSelect = document.getElementById("date-select");
   const dateRangeText = document.getElementById("date-range-text");
   const dateInputGroup = document.getElementById("date-input-group");
   const dateStart = document.getElementById("date-start");
   const dateEnd = document.getElementById("date-end");
-  const dateStartDisplay = document.getElementById("date-start-display");
-  const dateEndDisplay = document.getElementById("date-end-display");
-  const calendarPopup = document.getElementById("calendar-popup");
-  const calMonthYear = document.getElementById("cal-month-year");
-  const calDays = document.getElementById("calendar-days");
-  const calPrev = document.getElementById("cal-prev");
-  const calNext = document.getElementById("cal-next");
 
   const includeSelect = document.getElementById("include-select");
   const includeMatchMode = document.getElementById("include-match-mode");
-  const sheetSelect = document.getElementById("sheet-select");
-  const keywordSelect = document.getElementById("keyword-select");
   const includeInput = document.getElementById("include-input");
   const includeTagContainer = document.getElementById("include-tag-container");
 
@@ -104,6 +80,30 @@ document.addEventListener("DOMContentLoaded", () => {
   const searchLogBox = document.getElementById("search-log-box");
   const loadingBoxText = document.getElementById("loading-box-text");
   const DEFAULT_LOADING_TEXT = "🔍 전체 페이지 데이터를 탐색 및 필터링하는 중입니다... 잠시만 기다려주세요.";
+
+  // 검색/다운로드가 공통으로 쓰는 로딩 박스 표시·해제 - 문구 변경, 로딩박스/로그박스 표시,
+  // 로그 초기화, iframe 높이 갱신까지 한 번에 처리해 두 버튼 핸들러의 중복을 제거
+  function startLoading(message) {
+    if (loadingBoxText) loadingBoxText.textContent = message;
+    if (searchLoadingBox) searchLoadingBox.style.display = "block";
+    if (searchLogBox) {
+      searchLogBox.replaceChildren();
+      searchLogBox.style.display = "block";
+    }
+    sendHeightToParent();
+  }
+
+  function stopLoading() {
+    if (searchLoadingBox) searchLoadingBox.style.display = "none";
+    if (loadingBoxText) loadingBoxText.textContent = DEFAULT_LOADING_TEXT;
+    sendHeightToParent();
+  }
+
+  // 검색/다운로드 진행 중 버튼을 비활성화 - 중복 클릭 방지 + 진행 상태를 눈으로도 알 수 있게 함
+  function setBusy(busy) {
+    if (btnSearch) btnSearch.disabled = busy;
+    if (btnDownload) btnDownload.disabled = busy;
+  }
 
   // 헤더 드래그로 팝업 이동 (실제 이동은 부모 프레임에서 처리)
   const headerDragArea = document.querySelector(".header");
@@ -136,19 +136,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 조건 초기화
   function resetAllConditions() {
-    if (chkDisableDate) chkDisableDate.checked = true;
-    if (chkDisableInclude) chkDisableInclude.checked = true;
-    if (chkDisableExclude) chkDisableExclude.checked = true;
-    updateDateDisabledNote();
-
     if (dateSelect) {
       dateSelect.value = "24h";
       dateSelect.dispatchEvent(new Event("change"));
     }
     if (dateStart) dateStart.value = "";
     if (dateEnd) dateEnd.value = "";
-    if (dateStartDisplay) dateStartDisplay.textContent = "";
-    if (dateEndDisplay) dateEndDisplay.textContent = "";
 
     if (includeSelect) {
       includeSelect.value = "";
@@ -158,7 +151,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (includeMatchMode) includeMatchMode.value = "OR";
 
     if (excludeSelect) excludeSelect.value = "";
-    if (excludeTagContainer) excludeTagContainer.innerHTML = "";
+    applyDefaultExcludeTags();
 
     if (chkForceRefresh) chkForceRefresh.checked = false;
 
@@ -167,7 +160,7 @@ document.addEventListener("DOMContentLoaded", () => {
     window.parent.postMessage({ type: "RESET_FILTER" }, "*");
   }
 
-  // 로그 저장 버튼 - 실제 저장은 content-main.js가 격리 world 로그 버퍼로 수행
+  // 로그 저장 버튼 - 실제 저장은 content-main.js의 로그 버퍼로 수행
   btnLogSave?.addEventListener("click", () => {
     window.parent.postMessage({ type: "REQUEST_LOG_SAVE" }, "*");
   });
@@ -182,19 +175,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 다운로드 버튼 - 검색과 동일한 로딩 박스를 재사용해 진행 상황 표시
   btnDownload?.addEventListener("click", () => {
-    if (loadingBoxText) loadingBoxText.textContent = "📤 다운로드를 준비하는 중입니다... 잠시만 기다려주세요.";
-    if (searchLoadingBox) searchLoadingBox.style.display = "block";
-    if (searchLogBox) {
-      searchLogBox.innerHTML = "";
-      searchLogBox.style.display = "block";
-      sendHeightToParent();
-    }
+    startLoading("📤 다운로드를 준비하는 중입니다... 잠시만 기다려주세요.");
+    setBusy(true);
 
     if (downloadTimeoutId) clearTimeout(downloadTimeoutId);
     downloadTimeoutId = setTimeout(() => {
-      if (searchLoadingBox) searchLoadingBox.style.display = "none";
-      if (loadingBoxText) loadingBoxText.textContent = DEFAULT_LOADING_TEXT;
-      sendHeightToParent();
+      stopLoading();
+      setBusy(false);
       showAlert("응답 없음", [T("다운로드 응답을 받지 못했습니다."), BR(), T("페이지를 새로고침한 후 다시 시도해 주세요.")]);
       downloadTimeoutId = null;
     }, 600000);
@@ -202,21 +189,19 @@ document.addEventListener("DOMContentLoaded", () => {
     window.parent.postMessage({ type: "REQUEST_DOWNLOAD" }, "*");
   });
 
-  // 발행 시각 조건 수집 (검색 시 재사용)
+  // 발행 시각 조건 수집 (검색 시 재사용) - dateType(24h/direct) 중 하나가 항상 적용됨
   function collectDateParams() {
-    const isDateEnabled = chkDisableDate?.checked;
     return {
-      dateEnabled: isDateEnabled,
-      dateType: (isDateEnabled && dateSelect) ? dateSelect.value : "",
-      dateStart: (isDateEnabled && dateStart) ? dateStart.value : "",
-      dateEnd: (isDateEnabled && dateEnd) ? dateEnd.value : ""
+      dateType: dateSelect ? dateSelect.value : "24h",
+      dateStart: dateStart ? dateStart.value : "",
+      dateEnd: dateEnd ? dateEnd.value : ""
     };
   }
 
   // 검색 버튼 - 미래 날짜 검증 후 조건을 모아 부모에게 검색 요청
   btnSearch?.addEventListener("click", () => {
     const dateParamsCheck = collectDateParams();
-    if (dateParamsCheck.dateEnabled && dateParamsCheck.dateType === "direct") {
+    if (dateParamsCheck.dateType === "direct") {
       const today = new Date();
       const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
       const startCheck = parseDateValue(dateParamsCheck.dateStart);
@@ -228,33 +213,25 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
-    if (loadingBoxText) loadingBoxText.textContent = DEFAULT_LOADING_TEXT;
-    if (searchLoadingBox) searchLoadingBox.style.display = "block";
-    if (searchLogBox) {
-      searchLogBox.innerHTML = "";
-      searchLogBox.style.display = "block";
-      sendHeightToParent();
-    }
+    startLoading(DEFAULT_LOADING_TEXT);
+    setBusy(true);
 
     if (searchTimeoutId) clearTimeout(searchTimeoutId);
     searchTimeoutId = setTimeout(() => {
-      if (searchLoadingBox) searchLoadingBox.style.display = "none";
-      sendHeightToParent();
+      stopLoading();
+      setBusy(false);
       showAlert("응답 없음", [T("검색 응답을 받지 못했습니다."), BR(), T("페이지를 새로고침한 후 다시 시도해 주세요.")]);
       searchTimeoutId = null;
     }, 240000);
 
-    const isIncludeEnabled = chkDisableInclude?.checked;
-    const isExcludeEnabled = chkDisableExclude?.checked;
-
-    const includeTags = (isIncludeEnabled && includeTagContainer)
+    const includeTags = includeTagContainer
       ? Array.from(includeTagContainer.querySelectorAll(".tag")).map(tagEl => ({
           text: tagEl.querySelector("span")?.textContent.trim() || "",
           category: tagEl.dataset.value || "keyword"
         }))
       : [];
 
-    const excludeUserTypes = (isExcludeEnabled && excludeTagContainer)
+    const excludeUserTypes = excludeTagContainer
       ? Array.from(excludeTagContainer.querySelectorAll(".tag")).map(
           tagEl => tagEl.dataset.value || tagEl.querySelector("span")?.textContent.trim() || ""
         )
@@ -265,8 +242,6 @@ document.addEventListener("DOMContentLoaded", () => {
     window.parent.postMessage({
       type: "EXECUTE_SEARCH",
       params: {
-        includeEnabled: isIncludeEnabled,
-        excludeEnabled: isExcludeEnabled,
         includeTags: includeTags,
         includeMatchMode: includeMatchMode?.value === "AND" ? "AND" : "OR",
         excludeUserTypes: excludeUserTypes,
@@ -279,6 +254,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // 부모(content-main.js)로부터 오는 검색/다운로드 진행 및 결과 메시지 수신
   window.addEventListener("message", (event) => {
     if (event.source !== window.parent) return;
+    if (event.origin !== "https://brunch-admin.onkakao.net") return;
 
     if (event.data && (event.data.type === "SEARCH_PROGRESS" || event.data.type === "DOWNLOAD_PROGRESS")) {
       if (searchLogBox) {
@@ -293,24 +269,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (event.data && event.data.type === "SEARCH_RESULT_COUNT") {
       if (searchTimeoutId) { clearTimeout(searchTimeoutId); searchTimeoutId = null; }
-      if (searchLoadingBox) searchLoadingBox.style.display = "none";
-      sendHeightToParent();
+      stopLoading();
+      setBusy(false);
 
-      if (event.data.error) {
-        showAlert("검색 실패", [T(event.data.error)]);
+      if (event.data.cancelled) {
+        showAlert("검색 취소", [T("대량 조회를 취소했습니다."), BR(), T("이전 검색 결과가 있다면 그대로 유지돼요.")]);
+      } else if (event.data.error) {
+        showAlert("검색 실패", [T(event.data.error), BR(), BR(), T("잠시 후 다시 검색해 주세요.")]);
       } else {
         const parts = [T("총 "), B(`${event.data.count}건`), T("의 게시글이 검색되었습니다.")];
         if (event.data.fromCache) {
           parts.push(BR(), BR(), T("⚡ 같은 기간으로 이전에 받아둔 데이터를 재사용해서 즉시 조회했어요."));
         }
-        if (event.data.usedDefaultRange) {
-          const days = event.data.lookbackDays || 1;
-          parts.push(
-            BR(), BR(),
-            T("※ 발행 시각 조건 없이 검색하면 속도를 위해 기본적으로 "), B(`최근 ${days}일`), T(" 게시글만 조회됩니다."),
-            BR(),
-            T("더 오래된 글도 찾으시려면 발행 시각을 "), B("직접 지정"), T("으로 설정해서 검색해 주세요.")
-          );
+        if (event.data.hadDataIssue) {
+          parts.push(BR(), BR(), T("⚠️ 일부 데이터가 정상적으로 조회되지 않았어요. 재검색을 권장합니다."));
         }
         showAlert("검색 완료", parts);
       }
@@ -318,9 +290,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (event.data && event.data.type === "DOWNLOAD_RESULT") {
       if (downloadTimeoutId) { clearTimeout(downloadTimeoutId); downloadTimeoutId = null; }
-      if (searchLoadingBox) searchLoadingBox.style.display = "none";
-      if (loadingBoxText) loadingBoxText.textContent = DEFAULT_LOADING_TEXT;
-      sendHeightToParent();
+      stopLoading();
+      setBusy(false);
 
       if (event.data.error) {
         showAlert("다운로드 실패", [T(event.data.error)]);
@@ -330,59 +301,32 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // 구글 앱스 스크립트에서 기존 키워드 조회
+  // 구글 앱스 스크립트에서 기존 키워드 조회 - 조회 자체의 성공/실패와 "결과가 빈 배열인 것"을
+  // 구분해서 반환함 (실패를 빈 시트로 오판해 중복 저장하는 것 방지)
   async function getExistingKeywords(targetGid, sheetName = "") {
-    if (!GOOGLE_SCRIPT_URL) return [];
+    if (!GOOGLE_SCRIPT_URL) return { ok: true, keywords: [] };
 
     try {
       const fetchUrl = `${GOOGLE_SCRIPT_URL}?targetGid=${encodeURIComponent(targetGid)}&sheetName=${encodeURIComponent(sheetName)}`;
 
       const response = await fetch(fetchUrl, {
         method: "GET",
+        credentials: "include", // 구글 세션 쿠키 전달 - Code.gs의 assertAllowedUser_()가 요청자를 식별할 수 있게
         redirect: "follow"
       });
 
-      if (!response.ok) return [];
+      if (!response.ok) return { ok: false, keywords: [] };
 
       const data = await response.json();
       console.log("📥 [Code.gs 응답 수신]:", data);
 
       if (data && data.result === "success" && Array.isArray(data.keywords)) {
-        return data.keywords;
+        return { ok: true, keywords: data.keywords };
       }
-      return [];
+      return { ok: false, keywords: [] };
     } catch (e) {
       console.error("❌ 키워드 로드 예외 발생:", e);
-      return [];
-    }
-  }
-
-  async function fetchKeywordsFromSheet(targetGid, sheetName = "") {
-    if (!keywordSelect) return;
-
-    currentFetchingGid = targetGid;
-    keywordSelect.style.display = "inline-block";
-    keywordSelect.innerHTML = '<option value="">불러오는 중...</option>';
-
-    const keywords = await getExistingKeywords(targetGid, sheetName);
-
-    if (currentFetchingGid !== targetGid) return;
-
-    if (keywords.length > 0) {
-      // option 엘리먼트 직접 생성 - 구글시트에서 온 값이 태그로 해석되지 않도록
-      keywordSelect.innerHTML = "";
-      const defaultOpt = document.createElement("option");
-      defaultOpt.value = "";
-      defaultOpt.textContent = "키워드 선택";
-      keywordSelect.appendChild(defaultOpt);
-      keywords.forEach(kw => {
-        const opt = document.createElement("option");
-        opt.value = kw;
-        opt.textContent = kw;
-        keywordSelect.appendChild(opt);
-      });
-    } else {
-      keywordSelect.innerHTML = '<option value="">(등록된 키워드 없음)</option>';
+      return { ok: false, keywords: [] };
     }
   }
 
@@ -446,6 +390,23 @@ document.addEventListener("DOMContentLoaded", () => {
     return newTag;
   }
 
+  // 제외 조건 기본값 - 검색창을 새로 열 때/초기화할 때 항상 이 5개가 미리 선택돼 있도록 함
+  const EXCLUDE_DEFAULT_OPTIONS = [
+    { value: "white", text: "화이트유저" },
+    { value: "gray", text: "그레이유저" },
+    { value: "black", text: "블랙유저" },
+    { value: "red", text: "레드유저" },
+    { value: "membership_pro", text: "멤버십 전문 조회" }
+  ];
+
+  function applyDefaultExcludeTags() {
+    if (!excludeTagContainer) return;
+    excludeTagContainer.innerHTML = "";
+    EXCLUDE_DEFAULT_OPTIONS.forEach(opt => {
+      excludeTagContainer.appendChild(createTag(opt.text, true, opt.value));
+    });
+  }
+
   function addTagToContainer(container, tagText, isDanger = false, value = null) {
     if (!container || !tagText) return;
 
@@ -478,14 +439,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // ── 1-1. 커스텀 달력 팝업 (직접 지정) ──
-  let calActiveField = null;
-  let calViewDate = new Date();
+  // ── 1-1. "직접 지정" 날짜 범위 제약 (네이티브 <input type="date">의 min/max 속성으로 강제) ──
   const MAX_DIRECT_RANGE_DAYS = 3; // 직접 지정 최대 기간 (일)
 
   const pad2 = (n) => String(n).padStart(2, '0');
   const formatDateValue = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-  const formatDateDisplay = (d) => `${d.getFullYear()}.${pad2(d.getMonth() + 1)}.${pad2(d.getDate())}`;
   const addDays = (d, days) => {
     const copy = new Date(d);
     copy.setDate(copy.getDate() + days);
@@ -499,146 +457,30 @@ document.addEventListener("DOMContentLoaded", () => {
     return new Date(y, m - 1, d);
   }
 
-  // 시작일 선택 시 종료일을 자동으로 최대 범위(또는 오늘)로 설정
-  function setDateField(field, dateObj) {
-    const valueStr = formatDateValue(dateObj);
-    const displayStr = formatDateDisplay(dateObj);
-    if (field === 'start') {
-      if (dateStart) dateStart.value = valueStr;
-      if (dateStartDisplay) dateStartDisplay.textContent = displayStr;
-
-      const today = new Date();
-      const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      const maxEnd = addDays(dateObj, MAX_DIRECT_RANGE_DAYS - 1);
-      const autoEnd = maxEnd > todayDateOnly ? todayDateOnly : maxEnd;
-      if (dateEnd) dateEnd.value = formatDateValue(autoEnd);
-      if (dateEndDisplay) dateEndDisplay.textContent = formatDateDisplay(autoEnd);
-    } else {
-      if (dateEnd) dateEnd.value = valueStr;
-      if (dateEndDisplay) dateEndDisplay.textContent = displayStr;
-    }
-  }
-
-  function isSameDate(a, b) {
-    return !!a && !!b && a.getFullYear() === b.getFullYear() &&
-      a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-  }
-
-  // 달력 날짜 셀 렌더링 - 미래 날짜 및 최대 범위 밖 날짜는 선택 비활성화
-  function renderCalendarDays() {
-    if (!calDays || !calMonthYear) return;
-
-    const year = calViewDate.getFullYear();
-    const month = calViewDate.getMonth();
-    calMonthYear.textContent = `${month + 1}월 ${year}`;
-
-    const firstDay = new Date(year, month, 1);
-    const startOffset = firstDay.getDay();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const daysInPrevMonth = new Date(year, month, 0).getDate();
-
+  // 시작일이 바뀔 때마다 종료일의 min/max를 갱신하고, 범위를 벗어난 종료일은 자동 보정
+  function updateEndDateConstraints() {
+    if (!dateEnd) return;
     const today = new Date();
     const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const selectedStr = calActiveField === 'start' ? dateStart?.value : dateEnd?.value;
-    const selectedDate = parseDateValue(selectedStr);
+    const startDate = parseDateValue(dateStart?.value);
+    if (!startDate) return;
 
-    const startDateForRange = parseDateValue(dateStart?.value);
-    const maxEndDate = startDateForRange ? addDays(startDateForRange, MAX_DIRECT_RANGE_DAYS - 1) : null;
+    dateEnd.min = formatDateValue(startDate);
+    const maxEnd = addDays(startDate, MAX_DIRECT_RANGE_DAYS - 1);
+    const clampedMax = maxEnd > todayDateOnly ? todayDateOnly : maxEnd;
+    dateEnd.max = formatDateValue(clampedMax);
 
-    const cells = [];
-    for (let i = startOffset - 1; i >= 0; i--) {
-      const day = daysInPrevMonth - i;
-      cells.push({ day, otherMonth: true, dateObj: new Date(year, month - 1, day) });
+    const endDate = parseDateValue(dateEnd.value);
+    if (!endDate || endDate < startDate || endDate > clampedMax) {
+      dateEnd.value = formatDateValue(clampedMax);
     }
-    for (let d = 1; d <= daysInMonth; d++) {
-      cells.push({ day: d, otherMonth: false, dateObj: new Date(year, month, d) });
-    }
-    let nextDay = 1;
-    while (cells.length < 42) {
-      cells.push({ day: nextDay, otherMonth: true, dateObj: new Date(year, month + 1, nextDay) });
-      nextDay++;
-    }
-
-    calDays.innerHTML = "";
-    cells.forEach(cell => {
-      const el = document.createElement("div");
-      el.className = "calendar-day";
-      if (cell.otherMonth) el.classList.add("other-month");
-      if (isSameDate(cell.dateObj, today)) el.classList.add("today");
-      if (selectedDate && isSameDate(cell.dateObj, selectedDate)) el.classList.add("selected");
-
-      const isFuture = cell.dateObj > todayDateOnly;
-      const isOutOfRange = calActiveField === 'end' && startDateForRange &&
-        (cell.dateObj < startDateForRange || cell.dateObj > maxEndDate);
-      const isDisabled = isFuture || isOutOfRange;
-
-      if (isDisabled) {
-        el.classList.add("disabled");
-        el.title = isFuture
-          ? "아직 발생하지 않은 날짜는 선택할 수 없어요."
-          : `종료일은 시작일로부터 최대 ${MAX_DIRECT_RANGE_DAYS}일까지만 선택할 수 있어요.`;
-      }
-
-      el.textContent = cell.day;
-      el.addEventListener("click", () => {
-        if (!calActiveField || isDisabled) return;
-        setDateField(calActiveField, cell.dateObj);
-        closeCalendar();
-      });
-      calDays.appendChild(el);
-    });
   }
 
-  function openCalendar(field, triggerEl) {
-    calActiveField = field;
+  dateStart?.addEventListener("change", updateEndDateConstraints);
 
-    const currentStr = field === 'start' ? dateStart?.value : dateEnd?.value;
-    const baseDate = parseDateValue(currentStr) || new Date();
-    calViewDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1);
+  if (dateStart) dateStart.max = formatDateValue(new Date()); // 미래 날짜는 애초에 선택 불가
 
-    dateStartDisplay?.classList.toggle("active", field === 'start');
-    dateEndDisplay?.classList.toggle("active", field === 'end');
-
-    if (calendarPopup && triggerEl) {
-      calendarPopup.style.left = `${triggerEl.offsetLeft}px`;
-      calendarPopup.style.top = `${triggerEl.offsetTop + triggerEl.offsetHeight + 4}px`;
-      calendarPopup.classList.add("active");
-    }
-
-    renderCalendarDays();
-    sendHeightToParent();
-  }
-
-  function closeCalendar() {
-    calActiveField = null;
-    calendarPopup?.classList.remove("active");
-    dateStartDisplay?.classList.remove("active");
-    dateEndDisplay?.classList.remove("active");
-    sendHeightToParent();
-  }
-
-  dateStartDisplay?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    openCalendar('start', dateStartDisplay);
-  });
-  dateEndDisplay?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    openCalendar('end', dateEndDisplay);
-  });
-
-  calPrev?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    calViewDate.setMonth(calViewDate.getMonth() - 1);
-    renderCalendarDays();
-  });
-  calNext?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    calViewDate.setMonth(calViewDate.getMonth() + 1);
-    renderCalendarDays();
-  });
-
-  calendarPopup?.addEventListener("click", (e) => e.stopPropagation());
-  document.addEventListener("click", () => closeCalendar());
+  applyDefaultExcludeTags(); // 검색창을 새로 열었을 때도 제외조건 기본값이 미리 채워져 있도록
 
   if (dateSelect) {
     update24hRange();
@@ -648,7 +490,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (dateRangeText) dateRangeText.style.display = "none";
       if (dateInputGroup) dateInputGroup.style.display = "none";
-      closeCalendar();
 
       if (value === "24h") {
         update24hRange();
@@ -657,20 +498,19 @@ document.addEventListener("DOMContentLoaded", () => {
         if (dateInputGroup) {
           dateInputGroup.style.display = "flex";
           const today = new Date();
-          setDateField('start', today);
-          setDateField('end', today);
+          if (dateStart && !dateStart.value) dateStart.value = formatDateValue(today);
+          updateEndDateConstraints();
         }
       }
+      sendHeightToParent();
     });
   }
 
   // ── 2. 포함 조건 제어 ──
-  // 텍스트 직접입력 카테고리 (G.키워드는 sheet-select 방식이라 별도)
+  // 텍스트 직접입력 카테고리
   const INCLUDE_TEXT_CATEGORIES = {
     title: "제목 검색어 입력..",
     keyword_text: "키워드 입력..",
-    magazine: "매거진명 입력..",
-    author: "작가명 입력..",
     title_keyword: "제목/키워드 검색어 입력.."
   };
 
@@ -678,49 +518,17 @@ document.addEventListener("DOMContentLoaded", () => {
     includeSelect.addEventListener("change", (e) => {
       const val = e.target.value;
 
-      if (sheetSelect) { sheetSelect.style.display = "none"; sheetSelect.value = ""; }
-      if (keywordSelect) { keywordSelect.style.display = "none"; keywordSelect.innerHTML = '<option value="">키워드 선택</option>'; }
       if (includeInput) { includeInput.style.display = "none"; includeInput.value = ""; }
       if (includeTagContainer) includeTagContainer.innerHTML = "";
-      if (includeMatchMode) {
-        includeMatchMode.value = "OR";
-        includeMatchMode.style.display = (val === "keyword") ? "none" : "inline-block";
-      }
+      if (includeMatchMode) includeMatchMode.value = "OR";
       sendHeightToParent();
 
-      if (val === "keyword") {
-        if (sheetSelect) sheetSelect.style.display = "inline-block";
-      } else if (INCLUDE_TEXT_CATEGORIES[val]) {
+      if (INCLUDE_TEXT_CATEGORIES[val]) {
         if (includeInput) {
           includeInput.placeholder = INCLUDE_TEXT_CATEGORIES[val];
           includeInput.style.display = "inline-block";
           includeInput.focus();
         }
-      }
-    });
-  }
-
-  if (sheetSelect) {
-    sheetSelect.addEventListener("change", (e) => {
-      const selectedKey = e.target.value;
-      if (selectedKey === "") {
-        if (keywordSelect) {
-          keywordSelect.style.display = "none";
-          keywordSelect.innerHTML = '<option value="">키워드 선택</option>';
-        }
-      } else {
-        const info = SHEET_INFO[selectedKey];
-        if (info) fetchKeywordsFromSheet(info.gid, info.name);
-      }
-    });
-  }
-
-  if (keywordSelect) {
-    keywordSelect.addEventListener("change", (e) => {
-      const selectedVal = e.target.value;
-      if (selectedVal !== "") {
-        addTagToContainer(includeTagContainer, selectedVal, false, "keyword");
-        e.target.value = "";
       }
     });
   }
@@ -765,13 +573,6 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       includeInput.value = "";
-    } else if (val === "keyword") {
-      tagText = keywordSelect ? keywordSelect.value : "";
-      if (!tagText) {
-        showAlert("경고", "시트 및 키워드를 선택해 주세요.");
-        return;
-      }
-      keywordSelect.value = "";
     } else {
       showAlert("경고", "포함 조건 방식을 선택해 주세요.");
       return;
@@ -789,7 +590,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (modalMappingList) modalMappingList.innerHTML = "";
-    const defaultSheet = (sheetSelect && sheetSelect.value) ? sheetSelect.value : "none";
+    const defaultSheet = "none";
 
     tags.forEach((tag) => {
       const kwText = tag.textContent.trim();
@@ -840,13 +641,17 @@ document.addEventListener("DOMContentLoaded", () => {
     btnIncludeSave.disabled = true;
     btnIncludeSave.textContent = "저장 중...";
 
+    try {
     const usedSheetKeys = new Set(
       [...selectElements].map(sel => sel.value).filter(key => key !== "none" && SHEET_INFO[key])
     );
 
     const existingMap = {};
+    const lookupFailedSheets = new Set();
     await runWithConcurrencyLimit([...usedSheetKeys], async (key) => {
-      existingMap[key] = await getExistingKeywords(SHEET_INFO[key].gid, SHEET_INFO[key].name);
+      const result = await getExistingKeywords(SHEET_INFO[key].gid, SHEET_INFO[key].name);
+      existingMap[key] = result.keywords;
+      if (!result.ok) lookupFailedSheets.add(key);
     });
     for (const key in SHEET_INFO) {
       if (!existingMap[key]) existingMap[key] = [];
@@ -873,6 +678,12 @@ document.addEventListener("DOMContentLoaded", () => {
       const info = SHEET_INFO[targetSheetKey];
       if (!keyword || !info) continue;
 
+      if (lookupFailedSheets.has(targetSheetKey)) {
+        // 기존 키워드 조회 자체가 실패한 시트는 중복 여부를 확인할 수 없으므로 저장을 건너뜀
+        resultMap[targetSheetKey].failed.push(`${keyword}(기존 키워드 확인 실패)`);
+        continue;
+      }
+
       if (existingMap[targetSheetKey].includes(keyword)) {
         resultMap[targetSheetKey].duplicate.push(keyword);
       } else {
@@ -889,9 +700,6 @@ document.addEventListener("DOMContentLoaded", () => {
         resultMap[targetSheetKey].failed.push(`${keyword}(${result.reason})`);
       }
     });
-
-    btnIncludeSave.disabled = false;
-    btnIncludeSave.textContent = "저장";
 
     const parts = [];
     let totalSaved = 0;
@@ -933,10 +741,12 @@ document.addEventListener("DOMContentLoaded", () => {
     } else {
       showAlert("저장 처리 결과", parts);
     }
-
-    if (sheetSelect && sheetSelect.value) {
-      const info = SHEET_INFO[sheetSelect.value];
-      if (info) fetchKeywordsFromSheet(info.gid, info.name);
+    } catch (err) {
+      console.error("❌ 키워드 저장 중 예외 발생:", err);
+      showAlert("저장 실패", [T("키워드 저장 중 오류가 발생했습니다: " + (err?.message || String(err)))]);
+    } finally {
+      btnIncludeSave.disabled = false;
+      btnIncludeSave.textContent = "저장";
     }
   });
 
@@ -948,15 +758,7 @@ document.addEventListener("DOMContentLoaded", () => {
     requestAnimationFrame(() => {
       const headerHeight = headerEl ? headerEl.offsetHeight : 0;
       const mainHeight = mainEl ? mainEl.scrollHeight : 0;
-      let actualHeight = headerHeight + mainHeight;
-
-      // 달력 팝업(overflow:visible)이 열려있으면 잘리지 않도록 높이 보정
-      if (calendarPopup && calendarPopup.classList.contains("active")) {
-        const popupBottom = calendarPopup.offsetTop + calendarPopup.offsetHeight;
-        if (popupBottom + 12 > actualHeight) {
-          actualHeight = popupBottom + 12;
-        }
-      }
+      const actualHeight = headerHeight + mainHeight;
 
       window.parent.postMessage({ type: "RESIZE_IFRAME", height: actualHeight }, "*");
     });

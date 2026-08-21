@@ -34,8 +34,7 @@
       <div class="card">
         <div class="row">
           <div class="label-box">
-            <input type="checkbox" id="chk-disable-date" class="condition-toggle-chk" title="체크 해제 시 발행 시각 조건 제외" checked>
-            <label for="chk-disable-date">발행 시각</label>
+            <label>발행 시각</label>
           </div>
           <select class="custom-select select-short" id="date-select">
             <option value="24h">24시간 이내</option>
@@ -44,31 +43,15 @@
 
           <span id="date-range-text" class="date-range-badge"></span>
 
-          <div id="date-input-group" class="date-group" style="display: none;">
-            <input type="hidden" id="date-start">
-            <div class="date-display" id="date-start-display" tabindex="0"></div>
-            <span class="date-separator">~</span>
-            <input type="hidden" id="date-end">
-            <div class="date-display" id="date-end-display" tabindex="0"></div>
-          </div>
-
-          <!-- 🗓️ 커스텀 달력 팝업 -->
-          <div class="calendar-popup" id="calendar-popup">
-            <div class="calendar-header">
-              <button type="button" class="calendar-nav" id="cal-prev" title="이전 달">‹</button>
-              <div class="calendar-month-year" id="cal-month-year"></div>
-              <button type="button" class="calendar-nav" id="cal-next" title="다음 달">›</button>
-            </div>
-            <div class="calendar-weekdays">
-              <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
-            </div>
-            <div class="calendar-days" id="calendar-days"></div>
-          </div>
-
           <div class="btn-anchor-end btn-anchor-end--date">
             <button type="button" class="btn btn-secondary" id="btn-search">검색</button>
             <button type="button" class="btn btn-primary" id="btn-download">다운로드</button>
           </div>
+        </div>
+        <div id="date-input-group" class="date-group" style="display: none;">
+          <input type="date" class="date-picker" id="date-start">
+          <span class="date-separator">~</span>
+          <input type="date" class="date-picker" id="date-end">
         </div>
         <div class="force-refresh-row">
           <label class="force-refresh-label" for="chk-force-refresh">
@@ -77,17 +60,13 @@
           </label>
           <span class="force-refresh-info" tabindex="0" title="같은 조건으로 5분 안에 다시 검색하면 평소엔 이전 결과를 재사용해서 빨라요. 그사이 새로 올라온 글까지 확인하고 싶을 때만 체크하고 검색하세요 - 서버에서 완전히 새로 조회합니다(느려짐).">ⓘ</span>
         </div>
-        <div id="date-disabled-note" class="date-disabled-note" style="display: none;">
-          ⚠️ 발행 시각 조건을 해제하면, 포함 조건/제외 조건만으로 <strong>오늘 날짜</strong> 기준으로만 검색돼요.!
-        </div>
       </div>
 
       <!-- 두 번째 행: 포함 조건 -->
       <div class="card">
         <div class="row">
           <div class="label-box">
-            <input type="checkbox" id="chk-disable-include" class="condition-toggle-chk" title="체크 해제 시 포함 조건 제외" checked>
-            <label for="chk-disable-include">포함 조건</label>
+            <label>포함 조건</label>
           </div>
 
           <select class="custom-select select-short" id="include-select">
@@ -95,20 +74,6 @@
             <option value="title_keyword">제목+키워드</option>
             <option value="title">제목</option>
             <option value="keyword_text">키워드</option>
-            <option value="magazine">매거진</option>
-            <option value="author">작가</option>
-            <option value="keyword">G.키워드</option>
-          </select>
-
-          <select class="custom-select select-short" id="sheet-select" style="display: none;">
-            <option value="" disabled selected hidden>유형 선택</option>
-            <option value="religion">종교</option>
-            <option value="promo">홍보</option>
-            <option value="no_expose">노출 불가</option>
-          </select>
-
-          <select class="custom-select select-short" id="keyword-select" style="display: none;">
-            <option value="">키워드 선택</option>
           </select>
 
           <input type="text" class="custom-input input-keyword" id="include-input" placeholder="키워드 입력.." autocomplete="off" style="display: none;">
@@ -134,8 +99,7 @@
       <div class="card">
         <div class="row">
           <div class="label-box">
-            <input type="checkbox" id="chk-disable-exclude" class="condition-toggle-chk" title="체크 해제 시 제외 조건 제외" checked>
-            <label for="chk-disable-exclude">제외 조건</label>
+            <label>제외 조건</label>
           </div>
           <select class="custom-select select-short" id="exclude-select">
             <option value="" disabled selected hidden>유저 타입</option>
