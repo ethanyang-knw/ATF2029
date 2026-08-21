@@ -680,7 +680,6 @@ async function handleSearchExecution(filterParams) {
       hadDataIssue: !!hadDataIssue,
       ...extra
     });
-    isSearchingProcess = false;
     downloadAtfLogBufferAsTxt();
   };
 
@@ -742,12 +741,31 @@ window.addEventListener("message", (event) => {
       break;
 
     case "EXECUTE_SEARCH":
-      if (isSearchingProcess) return;
+      if (isSearchingProcess) {
+        // 이미 진행 중인 검색이 있음 - 조용히 무시하지 않고 별도 메시지로 안내
+        // (SEARCH_RESULT_COUNT와 타입을 분리해야 팝업이 두 검색을 헷갈리지 않음)
+        postToPopup("SEARCH_ALREADY_RUNNING");
+        break;
+      }
+
       isSearchingProcess = true;
 
       atfLogBuffer.length = 0; // 새 검색 시작 시 이전 로그 버퍼 비움
 
-      handleSearchExecution(event.data.params);
+      handleSearchExecution(event.data.params)
+        .catch((err) => {
+          // handleSearchExecution 내부에서 처리되지 않은 예외 - 조용히 멈추지 않고 안내
+          console.error("❌ 검색 처리 중 처리되지 않은 예외:", err);
+          postToPopup("SEARCH_RESULT_COUNT", {
+            count: 0,
+            error: "검색 처리 중 오류가 발생했습니다: " + (err?.message || String(err))
+          });
+        })
+        .finally(() => {
+          // 어떤 경로로 끝나든(성공/실패/예외) 검색 잠금을 반드시 해제 -
+          // 안 풀리면 이후 검색 버튼이 조용히 무시되는 상태가 됨
+          isSearchingProcess = false;
+        });
       break;
 
     case "RESET_FILTER":
@@ -781,7 +799,8 @@ window.addEventListener("message", (event) => {
 
 const HANDLE_CACHE_KEY = "atf_handle_cache_v2";
 const HANDLE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30일 (필명 변경 대비)
-const HANDLE_MAX_CONCURRENT = 6;
+const HANDLE_MAX_CONCURRENT = 3; // 검색(BATCH_SIZE=6)과 부하가 겹치지 않도록 하향
+const HANDLE_FETCH_TIMEOUT_MS = 20000; // 작가정보 페이지가 무거울 수 있어 fetchPage보다 여유있게
 // "브런치 주소" 셀 다음 <td><a>실제핸들</a> 패턴 (개발자도구로 실제 구조 확인함)
 const HANDLE_PATTERN = /브런치\s*주소<\/td>\s*<td>\s*<a[^>]*>([^<]+)<\/a>/;
 
@@ -803,17 +822,51 @@ async function saveHandleCache(cache) {
   }
 }
 
-// userId로 운영툴 자체의 작가정보 화면을 조회해 실제 브런치 주소(핸들)를 파싱
+// userId로 운영툴 자체의 작가정보 화면을 조회해 실제 브런치 주소(핸들)를 파싱.
+// fetchPage와 동일하게 타임아웃 + 패턴 도착 즉시 조기종료 적용 - 이 페이지가 무거운
+// 편이라 나머지 바디를 계속 받지 않도록 함
 async function resolveOneHandle(userId) {
   const url = `https://brunch-admin.onkakao.net/article/list?search=userId&keyword=${encodeURIComponent(userId)}`;
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), HANDLE_FETCH_TIMEOUT_MS);
+
   try {
-    const res = await fetch(url, { credentials: "same-origin" });
+    const res = await fetch(url, { credentials: "same-origin", signal: abortController.signal });
     if (!res.ok) return null;
-    const html = await res.text();
-    const match = html.match(HANDLE_PATTERN);
-    return match ? match[1].trim() : null;
-  } catch (e) {
+
+    if (!res.body || !res.body.getReader) {
+      const html = await res.text();
+      const match = html.match(HANDLE_PATTERN);
+      return match ? match[1].trim() : null;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      const match = buffer.match(HANDLE_PATTERN);
+      if (match) {
+        reader.cancel().catch(() => {});
+        return match[1].trim();
+      }
+
+      if (buffer.length > MAX_BUFFER_CHARS) {
+        reader.cancel().catch(() => {});
+        return null;
+      }
+    }
     return null;
+  } catch (e) {
+    // 타임아웃/네트워크 오류 - 폴백 주소(@@userId)로 처리되므로 다운로드 자체는 계속 진행됨
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

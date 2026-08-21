@@ -17,6 +17,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const GOOGLE_SCRIPT_URL = "https://script.google.com/a/macros/knworks.co.kr/s/AKfycbyuSEKNemIfwbXrw28R3VIXw6zZZSCr9NU16_NFN85hI62c524YeGfJO4TGgIkRNg5D/exec";
   const SPREADSHEET_ID = "1pFRSpbsbe7vVCtY8SuzOAcJNaQEapVrxXgX9CqAO1BI";
 
+  // 부모(브런치 운영툴) origin - 발신/수신 양쪽에서 이 상수 하나만 사용해 위조 메시지 전달을 막음
+  const PARENT_ORIGIN = "https://brunch-admin.onkakao.net";
+
   const SHEET_INFO = {
     "religion": { gid: 0, name: "종교" },
     "promo": { gid: 1945752687, name: "홍보" },
@@ -114,7 +117,7 @@ document.addEventListener("DOMContentLoaded", () => {
       type: "DRAG_START",
       x: e.clientX,
       y: e.clientY
-    }, "*");
+    }, PARENT_ORIGIN);
   });
 
   // 결과 알림 팝업 - 노드 배열을 받아 replaceChildren으로 렌더 (innerHTML 미사용)
@@ -157,12 +160,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (searchLoadingBox) searchLoadingBox.style.display = "none";
 
-    window.parent.postMessage({ type: "RESET_FILTER" }, "*");
+    window.parent.postMessage({ type: "RESET_FILTER" }, PARENT_ORIGIN);
   }
 
   // 로그 저장 버튼 - 실제 저장은 content-main.js의 로그 버퍼로 수행
   btnLogSave?.addEventListener("click", () => {
-    window.parent.postMessage({ type: "REQUEST_LOG_SAVE" }, "*");
+    window.parent.postMessage({ type: "REQUEST_LOG_SAVE" }, PARENT_ORIGIN);
   });
 
   btnReset?.addEventListener("click", () => {
@@ -170,7 +173,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   btnClose?.addEventListener("click", () => {
-    window.parent.postMessage({ type: "CLOSE_MODAL" }, "*");
+    window.parent.postMessage({ type: "CLOSE_MODAL" }, PARENT_ORIGIN);
   });
 
   // 다운로드 버튼 - 검색과 동일한 로딩 박스를 재사용해 진행 상황 표시
@@ -186,7 +189,7 @@ document.addEventListener("DOMContentLoaded", () => {
       downloadTimeoutId = null;
     }, 600000);
 
-    window.parent.postMessage({ type: "REQUEST_DOWNLOAD" }, "*");
+    window.parent.postMessage({ type: "REQUEST_DOWNLOAD" }, PARENT_ORIGIN);
   });
 
   // 발행 시각 조건 수집 (검색 시 재사용) - dateType(24h/direct) 중 하나가 항상 적용됨
@@ -248,13 +251,13 @@ document.addEventListener("DOMContentLoaded", () => {
         forceRefresh: !!chkForceRefresh?.checked,
         ...dateParams
       }
-    }, "*");
+    }, PARENT_ORIGIN);
   });
 
   // 부모(content-main.js)로부터 오는 검색/다운로드 진행 및 결과 메시지 수신
   window.addEventListener("message", (event) => {
     if (event.source !== window.parent) return;
-    if (event.origin !== "https://brunch-admin.onkakao.net") return;
+    if (event.origin !== PARENT_ORIGIN) return;
 
     if (event.data && (event.data.type === "SEARCH_PROGRESS" || event.data.type === "DOWNLOAD_PROGRESS")) {
       if (searchLogBox) {
@@ -264,6 +267,17 @@ document.addEventListener("DOMContentLoaded", () => {
         searchLogBox.scrollTop = searchLogBox.scrollHeight;
         sendHeightToParent();
       }
+      return;
+    }
+
+    if (event.data && event.data.type === "SEARCH_ALREADY_RUNNING") {
+      // 이 클릭으로 새로 만들어진 타이머를 반드시 정리 - 안 지우면 먼저 시작된 검색이
+      // 끝난 뒤에도 이 타이머가 뒤늦게 울려서 엉뚱하게 "응답 없음"이 뜰 수 있음
+      if (searchTimeoutId) { clearTimeout(searchTimeoutId); searchTimeoutId = null; }
+      stopLoading();
+      setBusy(false);
+
+      showAlert("검색 진행 중", [T("이전 검색이 아직 진행 중입니다."), BR(), T("검색이 완료될 때까지 잠시만 기다려 주세요.")]);
       return;
     }
 
@@ -760,7 +774,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const mainHeight = mainEl ? mainEl.scrollHeight : 0;
       const actualHeight = headerHeight + mainHeight;
 
-      window.parent.postMessage({ type: "RESIZE_IFRAME", height: actualHeight }, "*");
+      window.parent.postMessage({ type: "RESIZE_IFRAME", height: actualHeight }, PARENT_ORIGIN);
     });
   };
 
