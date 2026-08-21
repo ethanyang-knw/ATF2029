@@ -124,10 +124,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function showAlert(title, parts) {
     if (alertTitle) alertTitle.textContent = title;
     if (alertMessage) {
-      alertMessage.replaceChildren();
-      [].concat(parts).forEach(p => {
-        alertMessage.appendChild(typeof p === "string" ? T(p) : p);
-      });
+      alertMessage.replaceChildren(...parts);
     }
     if (alertModal) alertModal.classList.add("active");
   }
@@ -334,11 +331,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 구글 앱스 스크립트에서 기존 키워드 조회 - 조회 자체의 성공/실패와 "결과가 빈 배열인 것"을
   // 구분해서 반환함 (실패를 빈 시트로 오판해 중복 저장하는 것 방지)
-  async function getExistingKeywords(targetGid, sheetName = "") {
+  async function getExistingKeywords(targetGid) {
     if (!GOOGLE_SCRIPT_URL) return { ok: true, keywords: [] };
 
     try {
-      const fetchUrl = `${GOOGLE_SCRIPT_URL}?targetGid=${encodeURIComponent(targetGid)}&sheetName=${encodeURIComponent(sheetName)}`;
+      const fetchUrl = `${GOOGLE_SCRIPT_URL}?targetGid=${encodeURIComponent(targetGid)}`;
 
       const response = await fetch(fetchUrl, {
         method: "GET",
@@ -367,7 +364,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // 구글 시트로 키워드 전송 - 실제 응답을 읽어 성공/실패를 { ok, reason } 형태로 반환.
   // 크로스오리진 요청이라 credentials: "include"로 구글 세션 쿠키를 함께 보내야
   // Code.gs의 assertAllowedUser_()가 요청자를 식별할 수 있다.
-  async function sendToGoogleSheet(value, targetGid, sheetName) {
+  async function sendToGoogleSheet(value, targetGid) {
     if (!GOOGLE_SCRIPT_URL) return { ok: false, reason: "저장 주소가 설정되어 있지 않습니다." };
 
     try {
@@ -377,8 +374,7 @@ document.addEventListener("DOMContentLoaded", () => {
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({
           value: value,
-          targetGid: targetGid,
-          sheetName: sheetName
+          targetGid: targetGid
         }),
         redirect: "follow"
       });
@@ -448,7 +444,7 @@ document.addEventListener("DOMContentLoaded", () => {
       .map(span => span.textContent.trim());
 
     if (existingTags.includes(tagText)) {
-      showAlert("안내", "이미 추가되어 있는 키워드입니다.");
+      showAlert("안내", [T("이미 추가되어 있는 키워드입니다.")]);
       return;
     }
 
@@ -602,13 +598,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (INCLUDE_TEXT_CATEGORIES[val]) {
       tagText = includeInput ? includeInput.value.trim() : "";
       if (!tagText) {
-        showAlert("경고", "추가할 검색어를 입력해 주세요.");
+        showAlert("경고", [T("추가할 검색어를 입력해 주세요.")]);
         includeInput?.focus();
         return;
       }
       includeInput.value = "";
     } else {
-      showAlert("경고", "포함 조건 방식을 선택해 주세요.");
+      showAlert("경고", [T("포함 조건 방식을 선택해 주세요.")]);
       return;
     }
 
@@ -681,15 +677,11 @@ document.addEventListener("DOMContentLoaded", () => {
     );
 
     const existingMap = {};
-    const lookupFailedSheets = new Set();
     const lookupFailReasons = {};
     await runWithConcurrencyLimit([...usedSheetKeys], async (key) => {
-      const result = await getExistingKeywords(SHEET_INFO[key].gid, SHEET_INFO[key].name);
+      const result = await getExistingKeywords(SHEET_INFO[key].gid);
       existingMap[key] = result.keywords;
-      if (!result.ok) {
-        lookupFailedSheets.add(key);
-        lookupFailReasons[key] = result.reason;
-      }
+      if (!result.ok) lookupFailReasons[key] = result.reason;
     });
     for (const key in SHEET_INFO) {
       if (!existingMap[key]) existingMap[key] = [];
@@ -716,7 +708,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const info = SHEET_INFO[targetSheetKey];
       if (!keyword || !info) continue;
 
-      if (lookupFailedSheets.has(targetSheetKey)) {
+      if (lookupFailReasons[targetSheetKey]) {
         // 기존 키워드 조회 자체가 실패한 시트는 중복 여부를 확인할 수 없으므로 저장을 건너뜀
         resultMap[targetSheetKey].failed.push(`${keyword}(기존 키워드 확인 실패: ${lookupFailReasons[targetSheetKey]})`);
         continue;
@@ -731,7 +723,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     await runWithConcurrencyLimit(itemsToSave, async ({ keyword, targetSheetKey, info }) => {
-      const result = await sendToGoogleSheet(keyword, info.gid, info.name);
+      const result = await sendToGoogleSheet(keyword, info.gid);
       if (result.ok) {
         resultMap[targetSheetKey].saved.push(keyword);
       } else {
@@ -775,7 +767,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (totalSaved === 0 && totalDup === 0 && totalFailed === 0 && skippedCount === 0) {
-      showAlert("결과", "저장된 항목이 없습니다.");
+      showAlert("결과", [T("저장된 항목이 없습니다.")]);
     } else {
       showAlert("저장 처리 결과", parts);
     }

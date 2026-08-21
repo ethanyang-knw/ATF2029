@@ -45,9 +45,8 @@ function ensurePopupIframe() {
 // 어차피 iframe.src가 확장 자체 URL(popup.html)이라 iframe의 origin은 항상 ATF_EXTENSION_ORIGIN과 같음.
 function postToPopup(type, payload = {}) {
   const iframe = getPopupIframe();
-  if (!iframe || !iframe.contentWindow) return false;
+  if (!iframe || !iframe.contentWindow) return;
   iframe.contentWindow.postMessage({ type, ...payload }, ATF_EXTENSION_ORIGIN);
-  return true;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -918,7 +917,7 @@ async function resolveBrunchHandlesWithProgress(items, onProgress) {
   }
 
   const resolvedCount = Object.values(handles).filter(Boolean).length;
-  return { handles, resolvedCount, failedCount: totalUnique - resolvedCount, totalUnique };
+  return { handles, failedCount: totalUnique - resolvedCount, totalUnique };
 }
 
 // 검색결과 다운로드 오케스트레이션 - 작가 주소 조회, 진행상황 안내, xlsx 조립은
@@ -946,7 +945,6 @@ async function downloadMatchedResultsXlsx() {
   const uniqueItems = uniqueUserIds.map(userId => ({ userId }));
 
   let handles = {};
-  let handleResolvedCount = 0;
   let handleFailedCount = 0;
   let handleTotalUnique = 0;
   if (uniqueItems.length > 0) {
@@ -959,7 +957,6 @@ async function downloadMatchedResultsXlsx() {
       notifyProgress(`📤 작가 주소 조회 중... (${done}/${total}명)`);
     });
     handles = resolveResult.handles;
-    handleResolvedCount = resolveResult.resolvedCount;
     handleFailedCount = resolveResult.failedCount;
     handleTotalUnique = resolveResult.totalUnique;
   }
@@ -1005,7 +1002,6 @@ async function downloadMatchedResultsXlsx() {
 
   notifyPopup({
     count: rows.length,
-    handleResolved: handleResolvedCount,
     handleFailed: handleFailedCount,
     handleTotal: handleTotalUnique
   });

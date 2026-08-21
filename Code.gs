@@ -156,5 +156,5 @@ function logChange_(spreadsheet, sheetName, value, row, actorEmail) {
     logSheet.getRange(1, 1, 1, 5).setFontWeight("bold");
   }
 
-  logSheet.appendRow([new Date(), actorEmail || "(알수없음)", sheetName, value, row]);
+  logSheet.appendRow([new Date(), actorEmail, sheetName, value, row]);
 }
