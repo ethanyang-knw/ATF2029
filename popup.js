@@ -302,6 +302,16 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+    if (event.data && event.data.type === "DOWNLOAD_ALREADY_RUNNING") {
+      // 이 클릭으로 새로 만들어진 타이머를 정리 (검색 쪽과 동일한 이유)
+      if (downloadTimeoutId) { clearTimeout(downloadTimeoutId); downloadTimeoutId = null; }
+      stopLoading();
+      setBusy(false);
+
+      showAlert("다운로드 진행 중", [T("이전 다운로드가 아직 진행 중입니다."), BR(), T("작가 수가 많으면 몇 분 걸릴 수 있어요. 완료될 때까지 기다려 주세요.")]);
+      return;
+    }
+
     if (event.data && event.data.type === "DOWNLOAD_RESULT") {
       if (downloadTimeoutId) { clearTimeout(downloadTimeoutId); downloadTimeoutId = null; }
       stopLoading();
@@ -310,7 +320,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (event.data.error) {
         showAlert("다운로드 실패", [T(event.data.error)]);
       } else {
-        showAlert("다운로드 완료", [T("총 "), B(`${event.data.count}건`), T("의 결과가 엑셀(xlsx) 파일로 다운로드되었습니다.")]);
+        const parts = [T("총 "), B(`${event.data.count}건`), T("의 결과가 엑셀(xlsx) 파일로 다운로드되었습니다.")];
+        if (event.data.handleFailed > 0) {
+          parts.push(BR(), BR(), T(`ℹ️ 작가 ${event.data.handleTotal}명 중 ${event.data.handleFailed}명은 실제 주소를 확인하지 못해 기본 주소(@@형식)로 저장됐어요.`));
+          if (event.data.handleFailed >= event.data.handleTotal / 2) {
+            parts.push(BR(), T("⚠️ 실패 비율이 높습니다. 운영툴 화면 구조가 바뀌었을 수 있으니 확인해 주세요."));
+          }
+        }
+        showAlert("다운로드 완료", parts);
       }
     }
   });
@@ -329,18 +346,21 @@ document.addEventListener("DOMContentLoaded", () => {
         redirect: "follow"
       });
 
-      if (!response.ok) return { ok: false, keywords: [] };
+      if (!response.ok) return { ok: false, reason: `HTTP ${response.status}`, keywords: [] };
 
       const data = await response.json();
       console.log("📥 [Code.gs 응답 수신]:", data);
 
+      if (data && data.result === "forbidden") {
+        return { ok: false, reason: "권한 없음(사내 계정으로 로그인되어 있는지 확인해 주세요)", keywords: [] };
+      }
       if (data && data.result === "success" && Array.isArray(data.keywords)) {
         return { ok: true, keywords: data.keywords };
       }
-      return { ok: false, keywords: [] };
+      return { ok: false, reason: (data && data.error) || "알 수 없는 오류", keywords: [] };
     } catch (e) {
       console.error("❌ 키워드 로드 예외 발생:", e);
-      return { ok: false, keywords: [] };
+      return { ok: false, reason: e.message || "네트워크 오류", keywords: [] };
     }
   }
 
@@ -662,10 +682,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const existingMap = {};
     const lookupFailedSheets = new Set();
+    const lookupFailReasons = {};
     await runWithConcurrencyLimit([...usedSheetKeys], async (key) => {
       const result = await getExistingKeywords(SHEET_INFO[key].gid, SHEET_INFO[key].name);
       existingMap[key] = result.keywords;
-      if (!result.ok) lookupFailedSheets.add(key);
+      if (!result.ok) {
+        lookupFailedSheets.add(key);
+        lookupFailReasons[key] = result.reason;
+      }
     });
     for (const key in SHEET_INFO) {
       if (!existingMap[key]) existingMap[key] = [];
@@ -694,7 +718,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       if (lookupFailedSheets.has(targetSheetKey)) {
         // 기존 키워드 조회 자체가 실패한 시트는 중복 여부를 확인할 수 없으므로 저장을 건너뜀
-        resultMap[targetSheetKey].failed.push(`${keyword}(기존 키워드 확인 실패)`);
+        resultMap[targetSheetKey].failed.push(`${keyword}(기존 키워드 확인 실패: ${lookupFailReasons[targetSheetKey]})`);
         continue;
       }
 

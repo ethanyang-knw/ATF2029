@@ -750,7 +750,7 @@ window.addEventListener("message", (event) => {
 
       isSearchingProcess = true;
 
-      atfLogBuffer.length = 0; // 새 검색 시작 시 이전 로그 버퍼 비움
+      clearAtfLogBuffer(); // 새 검색 시작 시 이전 로그 버퍼 비움
 
       handleSearchExecution(event.data.params)
         .catch((err) => {
@@ -783,7 +783,11 @@ window.addEventListener("message", (event) => {
     }
 
     case "REQUEST_DOWNLOAD":
-      if (isDownloadingProcess) return;
+      if (isDownloadingProcess) {
+        // 검색(SEARCH_ALREADY_RUNNING)과 동일하게 조용히 무시하지 않고 안내
+        postToPopup("DOWNLOAD_ALREADY_RUNNING");
+        break;
+      }
       isDownloadingProcess = true;
       downloadMatchedResultsXlsx();
       break;
@@ -800,7 +804,7 @@ window.addEventListener("message", (event) => {
 const HANDLE_CACHE_KEY = "atf_handle_cache_v2";
 const HANDLE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30일 (필명 변경 대비)
 const HANDLE_MAX_CONCURRENT = 3; // 검색(BATCH_SIZE=6)과 부하가 겹치지 않도록 하향
-const HANDLE_FETCH_TIMEOUT_MS = 20000; // 작가정보 페이지가 무거울 수 있어 fetchPage보다 여유있게
+const HANDLE_FETCH_TIMEOUT_MS = 20000; // 장시간 대기 방지를 위해 20초로 제한
 // "브런치 주소" 셀 다음 <td><a>실제핸들</a> 패턴 (개발자도구로 실제 구조 확인함)
 const HANDLE_PATTERN = /브런치\s*주소<\/td>\s*<td>\s*<a[^>]*>([^<]+)<\/a>/;
 
@@ -870,7 +874,7 @@ async function resolveOneHandle(userId) {
   }
 }
 
-// 여러 userId를 동시 6개로 제한해 조회하는 워커풀. 캐시 적중(TTL 이내)분은 요청 없이 즉시 반환.
+// 여러 userId를 동시 HANDLE_MAX_CONCURRENT개로 제한해 조회하는 워커풀. 캐시 적중(TTL 이내)분은 요청 없이 즉시 반환.
 // onProgress(done, total)은 대량 다운로드 시 진행률 표시용 콜백.
 async function resolveBrunchHandlesWithProgress(items, onProgress) {
   const cache = await loadHandleCache();
@@ -913,7 +917,8 @@ async function resolveBrunchHandlesWithProgress(items, onProgress) {
     await saveHandleCache(cache);
   }
 
-  return handles;
+  const resolvedCount = Object.values(handles).filter(Boolean).length;
+  return { handles, resolvedCount, failedCount: totalUnique - resolvedCount, totalUnique };
 }
 
 // 검색결과 다운로드 오케스트레이션 - 작가 주소 조회, 진행상황 안내, xlsx 조립은
@@ -941,15 +946,22 @@ async function downloadMatchedResultsXlsx() {
   const uniqueItems = uniqueUserIds.map(userId => ({ userId }));
 
   let handles = {};
+  let handleResolvedCount = 0;
+  let handleFailedCount = 0;
+  let handleTotalUnique = 0;
   if (uniqueItems.length > 0) {
     notifyProgress(`📤 작가 ${uniqueItems.length}명의 실제 주소를 확인하는 중입니다... (결과가 많으면 몇 분 걸릴 수 있어요)`);
     let lastReported = -1;
-    handles = await resolveBrunchHandlesWithProgress(uniqueItems, (done, total) => {
+    const resolveResult = await resolveBrunchHandlesWithProgress(uniqueItems, (done, total) => {
       // 10명 단위로만 갱신 (매 건마다 보내면 대량일 때 팝업이 버벅일 수 있음)
       if (done !== total && done - lastReported < 10) return;
       lastReported = done;
       notifyProgress(`📤 작가 주소 조회 중... (${done}/${total}명)`);
     });
+    handles = resolveResult.handles;
+    handleResolvedCount = resolveResult.resolvedCount;
+    handleFailedCount = resolveResult.failedCount;
+    handleTotalUnique = resolveResult.totalUnique;
   }
 
   const rows = baseRows.map(r => {
@@ -991,7 +1003,12 @@ async function downloadMatchedResultsXlsx() {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 
-  notifyPopup({ count: rows.length });
+  notifyPopup({
+    count: rows.length,
+    handleResolved: handleResolvedCount,
+    handleFailed: handleFailedCount,
+    handleTotal: handleTotalUnique
+  });
   } catch (err) {
     console.error("❌ [content.js] 다운로드 처리 중 예외 발생:", err);
     notifyPopup({ error: "다운로드 처리 중 오류가 발생했습니다: " + (err?.message || String(err)) });

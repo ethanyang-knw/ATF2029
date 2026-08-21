@@ -12,6 +12,11 @@ function pushToAtfLogBuffer(line) {
   if (atfLogBuffer.length > ATF_LOG_MAX_LINES) atfLogBuffer.shift();
 }
 
+// 버퍼 초기화 - 다른 파일에서 atfLogBuffer.length = 0을 직접 쓰지 않고 이 함수를 거치게 함
+function clearAtfLogBuffer() {
+  atfLogBuffer.length = 0;
+}
+
 // 버퍼를 txt 파일로 다운로드
 // force=false(자동): [ERROR] 있을 때만 저장, force=true(수동 버튼): 항상 저장
 function downloadAtfLogBufferAsTxt({ force = false } = {}) {
