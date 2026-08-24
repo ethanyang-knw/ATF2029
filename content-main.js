@@ -235,7 +235,9 @@ function checkArticleMatch(item, filterParams) {
     dateType,
     dateStart,
     dateEnd,
-    nowAnchorMs
+    nowAnchorMs,
+    regulatedKeywords,
+    regulatedKeywordsEnabled
   } = filterParams;
 
   const title = (item.title || (item.article && item.article.title) || '').toLowerCase();
@@ -256,6 +258,8 @@ function checkArticleMatch(item, filterParams) {
 
   // 포함 조건 - 태그별 카테고리(제목/키워드/제목+키워드)에 맞는 필드만 매칭.
   // includeMatchMode가 'AND'면 태그를 전부 만족해야 하고, 'OR'(기본값)면 하나만 만족해도 됨.
+  // null = 해당 조건이 비활성 상태(입력 안 됨/체크 해제) - 활성 조건이 하나도 없으면 포함조건 자체를 건너뜀
+  let manualIncludeMatch = null;
   if (Array.isArray(includeTags) && includeTags.length > 0) {
     const matchesTag = (tagItem) => {
       const isObj = tagItem && typeof tagItem === 'object';
@@ -275,11 +279,30 @@ function checkArticleMatch(item, filterParams) {
       }
     };
 
-    const hasIncludeKeyword = includeMatchMode === 'AND'
+    manualIncludeMatch = includeMatchMode === 'AND'
       ? includeTags.every(matchesTag)
       : includeTags.some(matchesTag);
+  }
 
-    if (!hasIncludeKeyword) isMatch = false;
+  // 규제 키워드(구글시트 종교/홍보/노출불가) 자동포함 - 제목 또는 키워드에 하나라도 포함되면 통과(OR 고정).
+  // 화면엔 목록을 안 보여주고 팝업에서 내부적으로만 전달됨.
+  // enabled인데 목록이 비어있으면(조회 실패 등) null(비활성)이 아니라 false로 처리 - 조용히
+  // "전체 게시글 통과"가 되는 것을 방지(수동 태그가 있다면 그쪽으로는 여전히 통과 가능)
+  let regulatedMatch = null;
+  if (regulatedKeywordsEnabled) {
+    const keywords = Array.isArray(regulatedKeywords) ? regulatedKeywords : [];
+    regulatedMatch = keywords.length > 0 && keywords.some(kw => {
+      const kwText = String(kw || '').toLowerCase().trim();
+      if (!kwText) return false;
+      return titleAndSubTitle.includes(kwText) || keywordsStr.includes(kwText);
+    });
+  }
+
+  // 수동 포함태그, 규제키워드 둘 다 비활성이면 포함조건 자체를 안 걸고, 하나라도 활성이면
+  // 그중 하나라도 통과해야(OR) 포함조건을 만족한 것으로 봄
+  if (manualIncludeMatch !== null || regulatedMatch !== null) {
+    const passesInclude = manualIncludeMatch === true || regulatedMatch === true;
+    if (!passesInclude) isMatch = false;
   }
 
   // 제외 조건 - 유저타입/멤버십 여부로 필터링
@@ -677,6 +700,9 @@ async function handleSearchExecution(filterParams) {
       error: errorMessage,
       fromCache: fromCache,
       hadDataIssue: !!hadDataIssue,
+      // 팝업이 전역변수로 들고있지 않고, 이 검색요청 자체에 실려온 값을 그대로 돌려줌 -
+      // 장시간 검색 중 다른 검색요청이 끼어들어도 결과가 섞이지 않음
+      regulatedKeywordsFailedSheets: filterParams.regulatedKeywordsFailedSheets || [],
       ...extra
     });
     downloadAtfLogBufferAsTxt();

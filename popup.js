@@ -50,6 +50,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnSearch = document.getElementById("btn-search");
   const btnDownload = document.getElementById("btn-download");
   const chkForceRefresh = document.getElementById("chk-force-refresh");
+  const chkRegulatedKeywords = document.getElementById("chk-regulated-keywords");
 
   const dateSelect = document.getElementById("date-select");
   const dateRangeText = document.getElementById("date-range-text");
@@ -106,6 +107,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function setBusy(busy) {
     if (btnSearch) btnSearch.disabled = busy;
     if (btnDownload) btnDownload.disabled = busy;
+    if (btnReset) btnReset.disabled = busy;
   }
 
   // 헤더 드래그로 팝업 이동 (실제 이동은 부모 프레임에서 처리)
@@ -154,6 +156,7 @@ document.addEventListener("DOMContentLoaded", () => {
     applyDefaultExcludeTags();
 
     if (chkForceRefresh) chkForceRefresh.checked = false;
+    if (chkRegulatedKeywords) chkRegulatedKeywords.checked = true;
 
     if (searchLoadingBox) searchLoadingBox.style.display = "none";
 
@@ -199,7 +202,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // 검색 버튼 - 미래 날짜 검증 후 조건을 모아 부모에게 검색 요청
-  btnSearch?.addEventListener("click", () => {
+  btnSearch?.addEventListener("click", async () => {
     const dateParamsCheck = collectDateParams();
     if (dateParamsCheck.dateType === "direct") {
       const today = new Date();
@@ -224,6 +227,8 @@ document.addEventListener("DOMContentLoaded", () => {
       searchTimeoutId = null;
     }, 240000);
 
+    // 규제 키워드 조회(비동기 대기)가 끝나기 전에 조건이 바뀌는 것을 막기 위해,
+    // forceRefresh를 포함한 모든 조건을 여기서 한 번에 스냅샷 떠둔다 (초기화 버튼도 setBusy로 잠김)
     const includeTags = includeTagContainer
       ? Array.from(includeTagContainer.querySelectorAll(".tag")).map(tagEl => ({
           text: tagEl.querySelector("span")?.textContent.trim() || "",
@@ -238,14 +243,48 @@ document.addEventListener("DOMContentLoaded", () => {
       : [];
 
     const dateParams = collectDateParams();
+    const forceRefresh = !!chkForceRefresh?.checked;
+    const regulatedKeywordsEnabled = !!chkRegulatedKeywords?.checked;
+    const includeMatchModeValue = includeMatchMode?.value === "AND" ? "AND" : "OR";
+
+    // 규제 키워드(종교/홍보/노출불가) 자동포함 - 목록은 화면에 안 보이고 내부 검색조건에만 실림
+    let regulatedKeywords = [];
+    let regulatedKeywordsFailedSheets = []; // 이 요청 자체에 실어 보내서 결과 메시지로 그대로 돌려받음(전역변수로 안 둠)
+    if (regulatedKeywordsEnabled) {
+      const r = await fetchRegulatedKeywords();
+      regulatedKeywords = r.keywords;
+
+      if (r.anyFailed && r.keywords.length === 0) {
+        // 전부 실패 - 포함조건이 통째로 빠져서 "전체 게시글"이 검색될 수 있으므로
+        // 조용히 진행하지 않고 검색 자체를 중단(fail-closed)
+        if (searchTimeoutId) { clearTimeout(searchTimeoutId); searchTimeoutId = null; }
+        stopLoading();
+        setBusy(false);
+        showAlert("규제 키워드 조회 실패", [
+          T("종교/홍보/노출불가 키워드 목록을 하나도 불러오지 못했어요."), BR(),
+          T("검색을 중단했습니다. 잠시 후 다시 시도해 주세요."), BR(), BR(),
+          T("(포함 조건 없이 계속 진행하면 전체 게시글이 검색되니, 필요하면 체크박스를 끄고 검색해 주세요.)")
+        ]);
+        return;
+      }
+
+      if (r.anyFailed) {
+        // 일부만 실패 - 즉시 알림을 띄우면 뒤이어 뜨는 "검색 완료" 알림이 같은 모달을
+        // 덮어써서 사용자가 볼 새도 없이 사라짐. EXECUTE_SEARCH에 실어보내 결과 메시지로 돌려받아 합쳐서 보여줌.
+        regulatedKeywordsFailedSheets = r.failedSheetNames;
+      }
+    }
 
     window.parent.postMessage({
       type: "EXECUTE_SEARCH",
       params: {
         includeTags: includeTags,
-        includeMatchMode: includeMatchMode?.value === "AND" ? "AND" : "OR",
+        includeMatchMode: includeMatchModeValue,
         excludeUserTypes: excludeUserTypes,
-        forceRefresh: !!chkForceRefresh?.checked,
+        forceRefresh: forceRefresh,
+        regulatedKeywords: regulatedKeywords,
+        regulatedKeywordsEnabled: regulatedKeywordsEnabled,
+        regulatedKeywordsFailedSheets: regulatedKeywordsFailedSheets,
         ...dateParams
       }
     }, PARENT_ORIGIN);
@@ -283,10 +322,18 @@ document.addEventListener("DOMContentLoaded", () => {
       stopLoading();
       setBusy(false);
 
+      // content-main.js가 이 검색요청 자체에 실려있던 값을 그대로 돌려준 것 - 전역변수가 아니라
+      // 이 결과 메시지에 매칭되는 값이라, 장시간 검색 중 다른 요청이 끼어들어도 안 섞임
+      const failedSheets = Array.isArray(event.data.regulatedKeywordsFailedSheets) ? event.data.regulatedKeywordsFailedSheets : [];
+
       if (event.data.cancelled) {
-        showAlert("검색 취소", [T("대량 조회를 취소했습니다."), BR(), T("이전 검색 결과가 있다면 그대로 유지돼요.")]);
+        const parts = [T("대량 조회를 취소했습니다."), BR(), T("이전 검색 결과가 있다면 그대로 유지돼요.")];
+        if (failedSheets.length > 0) parts.push(BR(), BR(), T(`⚠️ ${failedSheets.join(", ")} 시트의 규제 키워드를 불러오지 못했습니다.`));
+        showAlert("검색 취소", parts);
       } else if (event.data.error) {
-        showAlert("검색 실패", [T(event.data.error), BR(), BR(), T("잠시 후 다시 검색해 주세요.")]);
+        const parts = [T(event.data.error), BR(), BR(), T("잠시 후 다시 검색해 주세요.")];
+        if (failedSheets.length > 0) parts.push(BR(), BR(), T(`⚠️ ${failedSheets.join(", ")} 시트의 규제 키워드도 불러오지 못했습니다.`));
+        showAlert("검색 실패", parts);
       } else {
         const parts = [T("총 "), B(`${event.data.count}건`), T("의 게시글이 검색되었습니다.")];
         if (event.data.fromCache) {
@@ -295,6 +342,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (event.data.hadDataIssue) {
           parts.push(BR(), BR(), T("⚠️ 일부 데이터가 정상적으로 조회되지 않았어요. 재검색을 권장합니다."));
         }
+        if (failedSheets.length > 0) parts.push(BR(), BR(), T(`⚠️ ${failedSheets.join(", ")} 시트의 규제 키워드를 불러오지 못해, 나머지 키워드로만 검색했습니다.`));
         showAlert("검색 완료", parts);
       }
     }
@@ -331,8 +379,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 구글 앱스 스크립트에서 기존 키워드 조회 - 조회 자체의 성공/실패와 "결과가 빈 배열인 것"을
   // 구분해서 반환함 (실패를 빈 시트로 오판해 중복 저장하는 것 방지)
+  const GET_EXISTING_KEYWORDS_TIMEOUT_MS = 15000;
+
   async function getExistingKeywords(targetGid) {
     if (!GOOGLE_SCRIPT_URL) return { ok: true, keywords: [] };
+
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), GET_EXISTING_KEYWORDS_TIMEOUT_MS);
 
     try {
       const fetchUrl = `${GOOGLE_SCRIPT_URL}?targetGid=${encodeURIComponent(targetGid)}`;
@@ -340,7 +393,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await fetch(fetchUrl, {
         method: "GET",
         credentials: "include", // 구글 세션 쿠키 전달 - Code.gs의 assertAllowedUser_()가 요청자를 식별할 수 있게
-        redirect: "follow"
+        redirect: "follow",
+        signal: abortController.signal
       });
 
       if (!response.ok) return { ok: false, reason: `HTTP ${response.status}`, keywords: [] };
@@ -357,8 +411,41 @@ document.addEventListener("DOMContentLoaded", () => {
       return { ok: false, reason: (data && data.error) || "알 수 없는 오류", keywords: [] };
     } catch (e) {
       console.error("❌ 키워드 로드 예외 발생:", e);
-      return { ok: false, reason: e.message || "네트워크 오류", keywords: [] };
+      return { ok: false, reason: e.name === "AbortError" ? "응답 시간 초과" : (e.message || "네트워크 오류"), keywords: [] };
+    } finally {
+      clearTimeout(timeoutId);
     }
+  }
+
+  // 규제 키워드(종교/홍보/노출불가 3개 시트) 통합 조회 - "규제 키워드 자동 포함" 체크 시 사용.
+  // 검색창엔 목록을 표시하지 않고 내부 검색조건에만 반영하므로, 매 검색마다 새로 조회하지 않도록
+  // 5분 캐시를 둔다(구글시트 저장용 캐시와는 별개).
+  const REGULATED_KEYWORDS_CACHE_TTL_MS = 5 * 60 * 1000;
+  let regulatedKeywordsCache = { keywords: [], cachedAt: 0 };
+
+  async function fetchRegulatedKeywords() {
+    if (Date.now() - regulatedKeywordsCache.cachedAt < REGULATED_KEYWORDS_CACHE_TTL_MS) {
+      return { keywords: regulatedKeywordsCache.keywords, anyFailed: false, failedSheetNames: [] };
+    }
+
+    const merged = new Set();
+    let anyFailed = false;
+    const failedSheetNames = [];
+    await runWithConcurrencyLimit(Object.keys(SHEET_INFO), async (key) => {
+      const result = await getExistingKeywords(SHEET_INFO[key].gid);
+      if (result.ok) {
+        result.keywords.forEach(k => { if (k) merged.add(String(k).toLowerCase()); });
+      } else {
+        anyFailed = true;
+        failedSheetNames.push(SHEET_INFO[key].name);
+      }
+    });
+
+    const list = [...merged];
+    if (!anyFailed) {
+      regulatedKeywordsCache = { keywords: list, cachedAt: Date.now() };
+    }
+    return { keywords: list, anyFailed, failedSheetNames };
   }
 
   // 구글 시트로 키워드 전송 - 실제 응답을 읽어 성공/실패를 { ok, reason } 형태로 반환.
